@@ -35,13 +35,3 @@ jobs:
           push: true
           tags: ${{ env.IMAGE }}
           platforms: linux/amd64
-
-      - name: Deploy to Koyeb
-        uses: koyeb/action-git-deploy@v1
-        with:
-          app-name: santaana-api
-          service-name: api
-          docker: ${{ env.IMAGE }}
-          service-ports: '3000:http'
-          service-routes: '/:3000'
-          service-env: PORT=3000
