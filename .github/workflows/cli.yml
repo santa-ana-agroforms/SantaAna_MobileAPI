@@ -36,11 +36,6 @@ jobs:
           tags: ${{ env.IMAGE }}
           platforms: linux/amd64
 
-      - name: Install Koyeb CLI
-        uses: koyeb-community/koyeb-actions@v2
-        with:
-          api_token: ${{ secrets.KOYEB_API_TOKEN }}
-
       - name: Deploy to Koyeb
         uses: koyeb/action-git-deploy@v1
         with:

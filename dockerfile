@@ -1,50 +1,50 @@
 # ---------- Stage 1: build ----------
 FROM node:22-alpine AS builder
-
 WORKDIR /app
 
-# Instala dependencias del sistema si tu proyecto las necesita (curl opcional para healthcheck)
+# Si usás deps nativas, dejar estas toolchains
 RUN apk add --no-cache python3 make g++ curl
 
-# Copia package.json/lock primero para cache
+# Copia manifiestos primero (cache)
 COPY package*.json ./
 
-# Instala deps exactas (ci) y compila
-RUN npm ci
+# Si TENÉS package-lock.json en el repo y querés usarlo, podés dejar npm ci;
+# si NO tenés, usá npm install:
+# RUN npm ci
+RUN npm install
+
+# Copia el código
 COPY tsconfig*.json nest-cli.json ./
 COPY src ./src
-# Si usás Prisma / assets, copia lo necesario aquí también
-# COPY prisma ./prisma
+# COPY prisma ./prisma   # si aplica
 
+# Compila
 RUN npm run build
+
+# Dejar solo deps de producción para el runtime
+RUN npm prune --omit=dev
+
 
 # ---------- Stage 2: runtime ----------
 FROM node:22-alpine AS runner
-
 WORKDIR /app
 ENV NODE_ENV=production
 
-# Copiá solo lo mínimo para correr
+# Copiá package.json (no vamos a instalar acá)
 COPY package*.json ./
-RUN npm ci --omit=dev
 
-# Copiá el build
+# Copiá node_modules ya “pruneado” y el build
+COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
+# COPY --from=builder /app/prisma ./prisma   # si aplica
 
-# (Opcional) copiar assets de runtime (views, public, prisma/schema generado, etc.)
-# COPY --from=builder /app/prisma ./prisma
-
-# Asegurá no correr como root
+# Usuario no root
 RUN addgroup -S app && adduser -S app -G app
 USER app
 
-# Koyeb proporciona PORT; exponelo por claridad y fallback local
+# Puerto (Koyeb te inyecta PORT)
 ARG PORT=3000
 ENV PORT=${PORT}
 EXPOSE ${PORT}
-
-# Healthcheck barato (opcional si tienes /health)
-# HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-#   CMD wget -qO- http://127.0.0.1:${PORT}/health || exit 1
 
 CMD ["node", "dist/main.js"]
