@@ -82,10 +82,8 @@ ult_version_pagina AS (
     fp.id_pagina,
     MAX(fpv.fecha_creacion) AS fecha_max
   FROM dbo.formularios_pagina fp
-  JOIN dbo.formularios_pagina_pagina_version fppv
-    ON fppv.id_pagina = fp.id_pagina
   JOIN dbo.formularios_pagina_version fpv
-    ON fpv.id_pagina_version = fppv.id_pagina_version
+    ON fpv.id_pagina = fp.id_pagina
   GROUP BY fp.id_pagina
 )
 SELECT
@@ -122,10 +120,8 @@ JOIN dbo.formularios_pagina_index_version fpiv
   ON fpiv.id_index_version = v.formulario_index_version_id
 JOIN dbo.formularios_pagina fp
   ON fp.id_pagina = fpiv.id_pagina
-JOIN dbo.formularios_pagina_pagina_version fppv
-  ON fppv.id_pagina = fp.id_pagina
 JOIN dbo.formularios_pagina_version fpv
-  ON fpv.id_pagina_version = fppv.id_pagina_version
+  ON fpv.id_pagina = fp.id_pagina
 JOIN ult_version_pagina uvp
   ON uvp.id_pagina = fp.id_pagina
  AND uvp.fecha_max = fpv.fecha_creacion
