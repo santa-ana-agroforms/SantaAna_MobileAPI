@@ -16,12 +16,6 @@ export class Pagina {
   @Column({ type: 'nvarchar', length: 1000, nullable: true })
   descripcion!: string | null;
 
-  @Column({ type: 'nvarchar', length: 50, name: 'color_fondo', nullable: true })
-  colorFondo!: string | null;
-
-  @Column({ type: 'nvarchar', length: 50, name: 'color_texto', nullable: true })
-  colorTexto!: string | null;
-
   // Puente página ↔ versión de página
   @OneToMany(() => PaginaVersionLink, (pv) => pv.pagina)
   versionesLink!: PaginaVersionLink[];

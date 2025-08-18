@@ -14,8 +14,6 @@ export type FormFlatRow = {
   pagina_secuencia: number | null;
   pagina_nombre: string;
   pagina_descripcion: string | null;
-  pagina_color_fondo: string | null;
-  pagina_color_texto: string | null;
 
   pagina_version_id: string;
   pagina_version_fecha: Date;
@@ -100,8 +98,6 @@ SELECT
   fp.secuencia                                AS pagina_secuencia,
   fp.nombre                                   AS pagina_nombre,
   fp.descripcion                              AS pagina_descripcion,
-  NULLIF(fp.color_fondo,'')                   AS pagina_color_fondo,
-  NULLIF(fp.color_texto,'')                   AS pagina_color_texto,
 
   fpv.id_pagina_version                       AS pagina_version_id,
   fpv.fecha_creacion                          AS pagina_version_fecha,
@@ -181,8 +177,6 @@ ORDER BY
         secuencia: number | null;
         nombre: string;
         descripcion: string | null;
-        color_fondo: string | null;
-        color_texto: string | null;
         pagina_version: {
           id: string;
           fecha_creacion: Date;
@@ -208,8 +202,6 @@ ORDER BY
           secuencia: r.pagina_secuencia ?? null,
           nombre: r.pagina_nombre,
           descripcion: r.pagina_descripcion ?? null,
-          color_fondo: r.pagina_color_fondo ?? null,
-          color_texto: r.pagina_color_texto ?? null,
           pagina_version: {
             id: r.pagina_version_id,
             fecha_creacion: r.pagina_version_fecha,
@@ -300,8 +292,6 @@ ORDER BY
           secuencia: r.pagina_secuencia ?? null,
           nombre: r.pagina_nombre,
           descripcion: r.pagina_descripcion ?? null,
-          color_fondo: r.pagina_color_fondo ?? null,
-          color_texto: r.pagina_color_texto ?? null,
           pagina_version: {
             id: r.pagina_version_id,
             fecha_creacion: r.pagina_version_fecha,
