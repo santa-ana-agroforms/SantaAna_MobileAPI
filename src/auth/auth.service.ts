@@ -1,69 +1,49 @@
 // src/auth/auth.service.ts
-import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { User } from './entities/user.entity';
-import { Repository } from 'typeorm';
-import * as crypto from 'crypto';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { User } from './entities/user.entity';
+import { verifyPassword } from './crypto/argon2.util';
+import type { JwtPayload } from './types/auth.types';
 
 @Injectable()
 export class AuthService {
   constructor(
-    @InjectRepository(User)
-    private userRepo: Repository<User>,
-    private jwtService: JwtService,
+    @InjectRepository(User) private readonly usersRepo: Repository<User>,
+    private readonly jwt: JwtService,
   ) {}
 
-  async validateLogin(
-    username: string,
-    plainPassword: string,
-  ): Promise<string | null> {
-    const user = await this.userRepo.findOne({ where: { username } });
-    if (!user || !user.isActive) return null;
-
-    if (!this.verifyPassword(plainPassword, user.password)) {
-      return null;
-    }
-
-    return this.jwtService.sign({
-      sub: user.id,
-      username: user.username,
-      email: user.email,
+  login = async (nombre_de_usuario: string, plainPassword: string) => {
+    // Busca por username (no por email)
+    const user = await this.usersRepo.findOne({
+      where: { nombre_de_usuario },
+      relations: { rol: true },
     });
-  }
+    if (!user) throw new UnauthorizedException('Credenciales inválidas');
 
-  private verifyPassword(password: string, djangoHash: string): boolean {
-    console.log('\n📥 Password ingresada:', password);
-    console.log('📦 Hash completo recibido:', djangoHash);
+    const ok = await verifyPassword(user.contrasena, plainPassword);
+    if (!ok) throw new UnauthorizedException('Credenciales inválidas');
 
-    try {
-      const parts = djangoHash.split('$');
-      if (parts.length !== 4 || parts[0] !== 'pbkdf2_sha256') {
-        console.error('❌ Formato de hash inválido');
-        return false;
-      }
+    const payload: JwtPayload = {
+      username: user.nombre_de_usuario,
+      roleId: user.rol.id,
+      roleName: user.rol.nombre,
+    };
 
-      const [algo, iterations, salt, hash] = parts;
+    const accessToken = await this.jwt.signAsync(payload, {
+      secret: process.env.JWT_SECRET || 'dev-secret',
+      algorithm: 'HS256',
+      expiresIn: process.env.JWT_EXPIRES_IN || '1h',
+    });
 
-      console.log('\n🧪 Desglose del hash Django:');
-      console.log('🔤 Algoritmo:', algo);
-      console.log('🔁 Iteraciones:', iterations);
-      console.log('🧂 Salt:', salt);
-      console.log('🔑 Hash esperado:', hash);
-
-      const derived = crypto
-        .pbkdf2Sync(password, salt, parseInt(iterations), 32, 'sha256')
-        .toString('base64');
-
-      console.log('\n🔍 Hash derivado desde NestJS:', derived);
-
-      const resultado = derived === hash;
-      console.log('✅ Coincide:', resultado);
-
-      return resultado;
-    } catch (err) {
-      console.error('💥 Error verificando contraseña:', err);
-      return false;
-    }
-  }
+    return {
+      access_token: accessToken,
+      user: {
+        nombre: user.nombre,
+        nombre_de_usuario: user.nombre_de_usuario,
+        rol: { id: user.rol.id, nombre: user.rol.nombre },
+      },
+    };
+  };
 }
