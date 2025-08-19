@@ -7,6 +7,7 @@ import {
   Injectable,
   BadRequestException,
   UnauthorizedException,
+  Logger,
 } from '@nestjs/common';
 import { randomBytes, createHmac } from 'crypto';
 import { JwtService } from '@nestjs/jwt';
@@ -14,6 +15,10 @@ import QRCode from 'qrcode';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from '../entities/user.entity';
+
+import sharp from 'sharp';
+import { promises as fs } from 'fs';
+import path from 'path';
 
 type QrStatus = 'pending' | 'claimed' | 'expired';
 
@@ -26,6 +31,15 @@ type QrSession = {
   accessToken?: string; // se setea al reclamar (login)
 };
 
+type QrRenderOpts = {
+  width?: number; // tamaño PNG del QR
+  dark?: string; // color de módulos
+  light?: string; // color de fondo (usar '#0000' para transparente)
+  logoPath?: string | undefined; // ruta del logo (opcional)
+  logoSizeRatio?: number; // 0.20–0.25 recomendado
+  logoBorder?: number; // padding blanco alrededor del logo (px)
+};
+
 const memStore = new Map<string, QrSession>(); // ⛔ En prod: usar Redis con TTL
 const now = () => Date.now();
 const makeSig = (sid: string, nonce: string, secret: string) =>
@@ -33,10 +47,92 @@ const makeSig = (sid: string, nonce: string, secret: string) =>
 
 @Injectable()
 export class AuthQrService {
+  private readonly logger = new Logger(AuthQrService.name);
+
   constructor(
     private readonly jwt: JwtService,
     @InjectRepository(User) private readonly usersRepo: Repository<User>,
   ) {}
+
+  // ========= Helper de render con logo centrado (PNG DataURL) =========
+  private makeQrDataUrl = async (payload: string, opts: QrRenderOpts = {}) => {
+    const {
+      width = Number(process.env.QR_WIDTH || 560),
+      dark = process.env.QR_DARK || '#0F172AFF',
+      light = process.env.QR_LIGHT || '#FFFFFFFF', // '#0000' para fondo transparente
+      logoPath = process.env.QR_LOGO_PATH, // ej: "assets/brand/logo.png"
+      logoSizeRatio = Number(process.env.QR_LOGO_RATIO || 0.22),
+      logoBorder = Number(process.env.QR_LOGO_BORDER || 14),
+    } = opts;
+
+    // 1) QR base (alta corrección de error)
+    const qrPng = await QRCode.toBuffer(payload, {
+      errorCorrectionLevel: 'H',
+      width,
+      margin: 2,
+      color: { dark, light },
+    });
+
+    // Si no hay logo configurado, regresar directo
+    if (!logoPath) {
+      return `data:image/png;base64,${qrPng.toString('base64')}`;
+    }
+
+    try {
+      // 2) Preparar logo
+      const absLogoPath = path.isAbsolute(logoPath)
+        ? logoPath
+        : path.resolve(process.cwd(), logoPath);
+
+      const logoRaw = await fs.readFile(absLogoPath);
+      const logoSize = Math.round(width * logoSizeRatio);
+
+      const logo = await sharp(logoRaw)
+        .resize({ width: logoSize, height: logoSize, fit: 'inside' })
+        .png()
+        .toBuffer();
+
+      // 3) Badge blanco redondeado para contraste
+      const badgeSize = logoSize + logoBorder * 2;
+      const radius = Math.round(badgeSize * 0.2);
+      const badgeSvg = Buffer.from(
+        `<svg width="${badgeSize}" height="${badgeSize}">
+           <rect x="0" y="0" width="${badgeSize}" height="${badgeSize}"
+                 rx="${radius}" ry="${radius}" fill="#FFFFFF"/>
+         </svg>`,
+      );
+
+      const badge = await sharp({
+        create: {
+          width: badgeSize,
+          height: badgeSize,
+          channels: 4,
+          background: { r: 0, g: 0, b: 0, alpha: 0 },
+        },
+      })
+        .composite([{ input: badgeSvg, gravity: 'centre' }])
+        .png()
+        .toBuffer();
+
+      // 4) Logo sobre badge y composite centrado en el QR
+      const icon = await sharp(badge)
+        .composite([{ input: logo, gravity: 'centre' }])
+        .png()
+        .toBuffer();
+
+      const finalPng = await sharp(qrPng)
+        .composite([{ input: icon, gravity: 'centre' }])
+        .png()
+        .toBuffer();
+
+      return `data:image/png;base64,${finalPng.toString('base64')}`;
+    } catch (e) {
+      this.logger.warn(
+        `QR con logo: usando fallback sin logo. Motivo: ${String(e)}`,
+      );
+      return `data:image/png;base64,${qrPng.toString('base64')}`;
+    }
+  };
 
   // Admin: genera QR ligado a un username
   startForUser = async (
@@ -52,7 +148,8 @@ export class AuthQrService {
 
     const sid = randomBytes(16).toString('hex');
     const nonce = randomBytes(16).toString('hex');
-    const ttlMs = 60_000; // 60s
+    // 1hour
+    const ttlMs = 60 * 60 * 1000; // 1h
     const expAt = now() + ttlMs;
 
     const secret = process.env.QR_SECRET || 'qr-dev-secret';
@@ -60,7 +157,9 @@ export class AuthQrService {
 
     // Payload que va dentro del QR (no revela el username)
     const payload = JSON.stringify({ sid, nonce, sig, v: 1 });
-    const qr = await QRCode.toDataURL(payload); // data:image/png;base64,...
+
+    // === QR bonito con logo (si QR_LOGO_PATH está seteado) ===
+    const qr = await this.makeQrDataUrl(payload);
 
     memStore.set(sid, { sid, nonce, expAt, status: 'pending', targetUsername });
     return { sid, qr, expiresIn: Math.floor(ttlMs / 1000) };
