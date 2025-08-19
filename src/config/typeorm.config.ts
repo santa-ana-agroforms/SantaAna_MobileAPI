@@ -2,6 +2,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModuleAsyncOptions } from '@nestjs/typeorm';
 import { DataSourceOptions } from 'typeorm';
 import * as FormsEntities from '../forms/entities';
+import { User, Role } from 'src/auth/entities';
 
 export const typeOrmAsyncConfig: TypeOrmModuleAsyncOptions = {
   imports: [ConfigModule],
@@ -14,7 +15,7 @@ export const typeOrmAsyncConfig: TypeOrmModuleAsyncOptions = {
       username: config.get<string>('SQLSERVER_USER'),
       password: config.get<string>('SQLSERVER_PASS'),
       database: config.get<string>('SQLSERVER_DB'),
-      entities: Object.values(FormsEntities),
+      entities: [...Object.values(FormsEntities), User, Role],
       options: {
         encrypt: config.get<string>('SQLSERVER_ENCRYPT') === 'true',
         trustServerCertificate:

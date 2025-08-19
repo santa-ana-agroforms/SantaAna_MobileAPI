@@ -12,6 +12,7 @@ const config_1 = require("@nestjs/config");
 const typeorm_1 = require("@nestjs/typeorm");
 const typeorm_config_1 = require("./config/typeorm.config");
 const forms_module_1 = require("./forms/forms.module");
+const auth_module_1 = require("./auth/auth.module");
 let AppModule = class AppModule {
 };
 exports.AppModule = AppModule;
@@ -21,6 +22,7 @@ exports.AppModule = AppModule = __decorate([
             config_1.ConfigModule.forRoot({ isGlobal: true, envFilePath: '.env' }),
             typeorm_1.TypeOrmModule.forRootAsync(typeorm_config_1.typeOrmAsyncConfig),
             forms_module_1.FormsModule,
+            auth_module_1.AuthModule,
         ],
     })
 ], AppModule);

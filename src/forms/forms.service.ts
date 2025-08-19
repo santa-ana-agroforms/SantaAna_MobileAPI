@@ -1,3 +1,8 @@
+/* eslint-disable @typescript-eslint/no-redundant-type-constituents */
+/* eslint-disable @typescript-eslint/no-unsafe-return */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment */
+/* eslint-disable @typescript-eslint/no-unsafe-call */
+/* eslint-disable @typescript-eslint/no-unsafe-member-access */
 // src/forms/forms.service.ts
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
@@ -100,7 +105,7 @@ SELECT
   fpv.id_pagina_version                       AS pagina_version_id,
   fpv.fecha_creacion                          AS pagina_version_fecha,
 
-  fc.id_campo                                 AS campo_id,
+
   fpc.sequence                                AS campo_sequence,
   fc.tipo                                     AS campo_tipo,
   fc.clase                                    AS campo_clase,
