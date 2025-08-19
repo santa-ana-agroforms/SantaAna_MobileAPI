@@ -10,6 +10,8 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { RolesGuard } from './guards/roles.guard';
 import { User } from './entities/user.entity';
 import { Role } from './entities/role.entity';
+import { AuthQrController } from './qr/auth-qr.controller';
+import { AuthQrService } from './qr/auth-qr.service';
 
 @Module({
   imports: [
@@ -24,8 +26,14 @@ import { Role } from './entities/role.entity';
     }),
     TypeOrmModule.forFeature([User, Role]),
   ],
-  controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, JwtAuthGuard, RolesGuard],
+  controllers: [AuthController, AuthQrController],
+  providers: [
+    AuthService,
+    JwtStrategy,
+    JwtAuthGuard,
+    RolesGuard,
+    AuthQrService,
+  ],
   exports: [JwtAuthGuard, RolesGuard], // para usar en otros módulos/rutas
 })
 export class AuthModule {}
