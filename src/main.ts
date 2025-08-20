@@ -1,3 +1,4 @@
+import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
@@ -7,16 +8,21 @@ async function bootstrap() {
 
   const config = new DocumentBuilder()
     .setTitle('Mi API')
-    .setDescription('Docs generadas con OpenAPI (Swagger)')
     .setVersion('1.0.0')
-    .addBearerAuth()
+    .addBearerAuth(
+      { type: 'http', scheme: 'bearer', bearerFormat: 'JWT', in: 'header' },
+      'access-token', // nombre del esquema
+    )
+    .addSecurityRequirements('access-token') // <— aplica a TODO el spec
     .build();
 
   const document = SwaggerModule.createDocument(app, config, {
-    deepScanRoutes: true, // explora rutas importadas
+    deepScanRoutes: true,
   });
 
-  SwaggerModule.setup('docs', app, document);
+  SwaggerModule.setup('docs', app, document, {
+    swaggerOptions: { persistAuthorization: true },
+  });
   await app.listen(process.env.PORT ?? 3000);
 }
 bootstrap();

@@ -1,8 +1,16 @@
 // src/forms/forms.controller.ts
-import { Controller, Get, Param, NotFoundException } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Param,
+  NotFoundException,
+  UseGuards,
+} from '@nestjs/common';
 import { FormsService } from './forms.service';
+import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 
 @Controller('forms')
+@UseGuards(JwtAuthGuard)
 export class FormsController {
   constructor(private readonly service: FormsService) {}
 
