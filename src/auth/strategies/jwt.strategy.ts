@@ -24,14 +24,14 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
     // Usamos el sub (id) del token para buscar el user actual y su rol
     const user = await this.usersRepo.findOne({
       where: { nombre_de_usuario: payload.username },
-      relations: { rol: true },
+      relations: { roles: true },
     });
     if (!user) throw new UnauthorizedException('Usuario no encontrado');
 
     return {
       nombre: user.nombre,
       nombre_de_usuario: user.nombre_de_usuario,
-      rol: { id: user.rol.id, nombre: user.rol.nombre },
+      roles: user.roles.map((r) => ({ id: r.id, nombre: r.nombre })),
     };
   }
 }

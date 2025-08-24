@@ -7,6 +7,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
+import { AuthUser } from 'src/auth/types/auth.types';
 
 // Tipado del resultado plano (coincide con los alias del SELECT)
 export type FormFlatRow = {
@@ -23,7 +24,7 @@ export type FormFlatRow = {
   pagina_version_id: string;
   pagina_version_fecha: Date;
 
-  campo_id: string;
+  campo_id: string; // <-- ahora sí viene del SELECT
   campo_sequence: number;
   campo_tipo: string;
   campo_clase: string;
@@ -105,7 +106,7 @@ SELECT
   fpv.id_pagina_version                       AS pagina_version_id,
   fpv.fecha_creacion                          AS pagina_version_fecha,
 
-
+  fc.id_campo                                  AS campo_id,              -- <-- agregado
   fpc.sequence                                AS campo_sequence,
   fc.tipo                                     AS campo_tipo,
   fc.clase                                    AS campo_clase,
@@ -113,7 +114,7 @@ SELECT
   fc.etiqueta                                  AS campo_etiqueta,
   fc.ayuda                                     AS campo_ayuda,
   fc.config                                    AS campo_config,
-  -- Normalizar requerido a 0/1 para evitar Buffer
+  -- Normalizar requerido a 0/1 para evitar Buffer/binario(1)
   CASE 
     WHEN TRY_CONVERT(int, fc.requerido) = 1 THEN 1 
     ELSE 0 
@@ -136,39 +137,101 @@ JOIN dbo.formularios_campo fc
   ON fc.id_campo = fpc.id_campo
 `;
 
+  // WHERE de visibilidad (público o asociado por rol del usuario)
+  private readonly visibleForUserWhere = `
+WHERE (f.es_publico = 1)
+   OR EXISTS (
+        SELECT 1
+        FROM dbo.formularios_rol_formulario rf
+        JOIN dbo.formularios_rol_user ru
+          ON ru.id_rol = rf.rol_id
+        WHERE ru.nombre_de_usuario = @0
+          AND rf.id_formulario = f.id
+      )
+`;
+
   // ---------------------------------------------
-  // PLANO: todos los formularios
+  // PLANO: todos los formularios (filtrado por usuario)
   // ---------------------------------------------
-  getFormsFlatAll = async (): Promise<FormFlatRow[]> => {
+  getFormsFlatAll = async (user: AuthUser): Promise<FormFlatRow[]> => {
     const sql = `${this.baseCteSql}
-ORDER BY
-  fp.secuencia,
-  fpc.sequence;`;
-    const rows = await this.dataSource.query(sql);
+${this.visibleForUserWhere}
+ORDER BY fp.secuencia, fpc.sequence;`;
+    const rows = await this.dataSource.query(sql, [user.nombre_de_usuario]);
     return rows as FormFlatRow[];
   };
 
   // ---------------------------------------------
-  // PLANO: un formulario por ID
+  // PLANO: un formulario por ID (sin filtro)  ← si querés mantener compatibilidad
   // ---------------------------------------------
   getFormFlatById = async (formId: string): Promise<FormFlatRow[]> => {
     const sql = `${this.baseCteSql}
 WHERE f.id = @0
-ORDER BY
-  fp.secuencia,
-  fpc.sequence;`;
+ORDER BY fp.secuencia, fpc.sequence;`;
     const rows = await this.dataSource.query(sql, [formId]);
     return rows as FormFlatRow[];
   };
 
   // ---------------------------------------------
-  // ÁRBOL: un formulario (form → páginas → campos)
+  // PLANO: un formulario por ID (filtrado por usuario)
+  // ---------------------------------------------
+  getFormFlatByIdForUser = async (
+    formId: string,
+    user: AuthUser,
+  ): Promise<FormFlatRow[]> => {
+    const sql = `${this.baseCteSql}
+WHERE f.id = @0
+  AND (
+        f.es_publico = 1
+     OR EXISTS (
+          SELECT 1
+          FROM dbo.formularios_rol_formulario rf
+          JOIN dbo.formularios_rol_user ru
+            ON ru.id_rol = rf.rol_id
+          WHERE ru.nombre_de_usuario = @1
+            AND rf.id_formulario = f.id
+        )
+  )
+ORDER BY fp.secuencia, fpc.sequence;`;
+    const rows = await this.dataSource.query(sql, [
+      formId,
+      user.nombre_de_usuario,
+    ]);
+    return rows as FormFlatRow[];
+  };
+
+  // ---------------------------------------------
+  // ÁRBOL: un formulario (sin filtro)  ← compatibilidad
   // ---------------------------------------------
   getFormTreeById = async (formId: string) => {
     const flat = await this.getFormFlatById(formId);
     if (flat.length === 0) return null;
+    return this.buildTreeFromFlat(flat);
+  };
 
-    const base = flat[0];
+  // ---------------------------------------------
+  // ÁRBOL: un formulario (filtrado por usuario)
+  // ---------------------------------------------
+  getFormTreeByIdForUser = async (formId: string, user: AuthUser) => {
+    const flat = await this.getFormFlatByIdForUser(formId, user);
+    if (flat.length === 0) return null;
+    return this.buildTreeFromFlat(flat);
+  };
+
+  // ---------------------------------------------
+  // ÁRBOL: todos los formularios (filtrado por usuario)
+  // ---------------------------------------------
+  getFormsTreeAll = async (user: AuthUser) => {
+    const flat = await this.getFormsFlatAll(user);
+    if (flat.length === 0) return [];
+    return this.groupFlatIntoTrees(flat);
+  };
+
+  // ===== Helpers de armado =====
+
+  private buildTreeFromFlat(flat: FormFlatRow | FormFlatRow[]): any {
+    const rows = Array.isArray(flat) ? flat : [flat];
+    const base = rows[0];
 
     // Agrupar por página
     const paginasMap = new Map<
@@ -178,10 +241,7 @@ ORDER BY
         secuencia: number | null;
         nombre: string;
         descripcion: string | null;
-        pagina_version: {
-          id: string;
-          fecha_creacion: Date;
-        };
+        pagina_version: { id: string; fecha_creacion: Date };
         campos: Array<{
           id_campo: string;
           sequence: number;
@@ -196,7 +256,7 @@ ORDER BY
       }
     >();
 
-    for (const r of flat) {
+    for (const r of rows) {
       if (!paginasMap.has(r.pagina_id)) {
         paginasMap.set(r.pagina_id, {
           id_pagina: r.pagina_id,
@@ -224,7 +284,6 @@ ORDER BY
       });
     }
 
-    // Ordenar páginas y campos por sequence (luego por id)
     const paginas = Array.from(paginasMap.values()).sort((a, b) => {
       const sa = a.secuencia ?? 0;
       const sb = b.secuencia ?? 0;
@@ -238,37 +297,25 @@ ORDER BY
       });
     }
 
-    // Estructura final como la que pediste
-    const tree = {
+    return {
       id_formulario: base.formulario_id,
       nombre: base.formulario_nombre,
       version_vigente: {
         id_index_version: base.formulario_index_version_id,
         fecha_creacion: base.formulario_index_version_fecha,
       },
-      paginas, // en orden de secuencia
+      paginas,
     };
+  }
 
-    return tree;
-  };
-
-  // ---------------------------------------------
-  // ÁRBOL: todos los formularios (array de árboles)
-  // ---------------------------------------------
-  getFormsTreeAll = async () => {
-    const flat = await this.getFormsFlatAll();
-    if (flat.length === 0) return [];
-
+  private groupFlatIntoTrees = (flat: FormFlatRow[]) => {
     // Agrupar por formulario
     const formsMap = new Map<
       string,
       {
         id_formulario: string;
         nombre: string;
-        version_vigente: {
-          id_index_version: string;
-          fecha_creacion: Date;
-        };
+        version_vigente: { id_index_version: string; fecha_creacion: Date };
         paginasMap: Map<string, any>;
       }
     >();
@@ -337,7 +384,6 @@ ORDER BY
       };
     });
 
-    // ordenar formularios por id (o por nombre si preferís)
     result.sort((a, b) => a.id_formulario.localeCompare(b.id_formulario));
     return result;
   };

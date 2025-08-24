@@ -1,21 +1,30 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
 // role.entity.ts
-import { Column, Entity, OneToMany, PrimaryColumn } from 'typeorm';
+import {
+  Column,
+  Entity,
+  PrimaryColumn,
+  ManyToMany,
+  ValueTransformer,
+} from 'typeorm';
 import { User } from './user.entity';
+
+const trimChar: ValueTransformer = {
+  to: (v: string | null) => v,
+  from: (v: string | null) => (typeof v === 'string' ? v.trim() : v),
+};
 
 @Entity({ name: 'formularios_rol', schema: 'dbo' })
 export class Role {
-  @PrimaryColumn({ type: 'char', length: 32 })
+  @PrimaryColumn({ type: 'char', length: 32, transformer: trimChar })
   id!: string;
 
   @Column({ type: 'nvarchar', length: 50 })
   nombre!: string;
 
-  // Si tu columna en DB es nvarchar(max), TypeORM no va a tocar el schema si synchronize=false.
-  // Podés dejarlo así:
-  @Column({ type: 'nvarchar', length: 'MAX' as any })
+  @Column({ type: 'nvarchar', length: 'MAX' })
   descripcion!: string;
 
-  @OneToMany(() => User, (user) => user.rol)
+  // ✅ Ahora:
+  @ManyToMany(() => User, (user) => user.roles, { eager: false })
   users!: User[];
 }
