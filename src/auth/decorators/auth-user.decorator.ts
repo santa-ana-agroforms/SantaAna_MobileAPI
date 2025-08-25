@@ -11,3 +11,5 @@ export const AuthUser = createParamDecorator(
     return req.user;
   },
 );
+
+export type TypeAuthUser = TypeAuth;

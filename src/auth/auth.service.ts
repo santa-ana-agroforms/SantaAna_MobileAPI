@@ -18,7 +18,7 @@ export class AuthService {
     // Busca por username (no por email)
     const user = await this.usersRepo.findOne({
       where: { nombre_de_usuario },
-      relations: { rol: true },
+      relations: { roles: true },
     });
     if (!user) throw new UnauthorizedException('Credenciales inválidas');
 
@@ -27,8 +27,8 @@ export class AuthService {
 
     const payload: JwtPayload = {
       username: user.nombre_de_usuario,
-      roleId: user.rol.id,
-      roleName: user.rol.nombre,
+      rolesId: user.roles.map((r) => r.id),
+      rolesName: user.roles.map((r) => r.nombre),
     };
 
     const accessToken = await this.jwt.signAsync(payload, {
@@ -42,7 +42,7 @@ export class AuthService {
       user: {
         nombre: user.nombre,
         nombre_de_usuario: user.nombre_de_usuario,
-        rol: { id: user.rol.id, nombre: user.rol.nombre },
+        roles: user.roles.map((r) => ({ id: r.id, nombre: r.nombre })),
       },
     };
   };

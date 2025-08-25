@@ -17,11 +17,11 @@ export class RolesGuard implements CanActivate {
     if (!required || required.length === 0) return true;
 
     const req = ctx.switchToHttp().getRequest();
-    const user = req.user as { rol?: { nombre?: string } };
-    const userRole = user?.rol?.nombre;
-    if (!userRole) return false;
+    const user = req.user as { roles?: { nombre?: string }[] };
+    const userRoles = user?.roles?.map((r) => r.nombre);
+    if (!userRoles) return false;
 
     // match directo por nombre en DB (e.g., 'ADMIN')
-    return required.includes(userRole);
+    return required.some((role) => userRoles.includes(role));
   }
 }

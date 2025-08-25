@@ -1,19 +1,6 @@
 // user.entity.ts
-import {
-  Column,
-  Entity,
-  JoinColumn,
-  ManyToOne,
-  PrimaryColumn,
-  ValueTransformer,
-} from 'typeorm';
+import { Column, Entity, ManyToMany, JoinTable, PrimaryColumn } from 'typeorm';
 import { Role } from './role.entity';
-
-// Evitar espacios por char(32) de SQL Server
-const trimChar: ValueTransformer = {
-  to: (v: string | null) => v,
-  from: (v: string | null) => (typeof v === 'string' ? v.trim() : v),
-};
 
 @Entity({ name: 'formularios_usuarios', schema: 'dbo' })
 export class User {
@@ -28,18 +15,24 @@ export class User {
 
   @Column({ type: 'nvarchar', length: 128 })
   contrasena!: string;
-  //nombre_de_usuario
+
+  // PK
   @PrimaryColumn({ type: 'nvarchar', length: 30 })
   nombre_de_usuario!: string;
 
-  @Column({ name: 'rol_id', type: 'char', length: 32, transformer: trimChar })
-  rol_id!: string;
-
-  @ManyToOne(() => Role, (role) => role.users, {
-    nullable: false,
-    onDelete: 'NO ACTION', // o 'CASCADE' / 'SET NULL' según tu FK
-    eager: false,
+  // ✅ NUEVO: muchos-a-muchos
+  @ManyToMany(() => Role, (role) => role.users, { eager: false })
+  @JoinTable({
+    schema: 'dbo',
+    name: 'formularios_rol_user',
+    joinColumn: {
+      name: 'nombre_de_usuario', // columna FK hacia User
+      referencedColumnName: 'nombre_de_usuario',
+    },
+    inverseJoinColumn: {
+      name: 'id_rol', // columna FK hacia Role
+      referencedColumnName: 'id',
+    },
   })
-  @JoinColumn({ name: 'rol_id' })
-  rol!: Role;
+  roles!: Role[];
 }

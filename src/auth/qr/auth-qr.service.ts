@@ -141,7 +141,7 @@ export class AuthQrService {
     // Verificar que exista el usuario, para no generar QR inválido
     const user = await this.usersRepo.findOne({
       where: { nombre_de_usuario: targetUsername },
-      relations: { rol: true },
+      relations: { roles: true },
       select: ['nombre_de_usuario'], // consulta mínima
     });
     if (!user) throw new BadRequestException('Usuario destino no existe');
@@ -185,15 +185,15 @@ export class AuthQrService {
     // Cargar user y su rol
     const user = await this.usersRepo.findOne({
       where: { nombre_de_usuario: sess.targetUsername },
-      relations: { rol: true },
+      relations: { roles: true },
     });
     if (!user) throw new UnauthorizedException('Usuario no encontrado');
 
     // Tu payload (sin sub): username + rol
     const tokenPayload = {
       username: user.nombre_de_usuario,
-      roleId: user.rol.id,
-      roleName: user.rol.nombre,
+      rolesId: user.roles.map((r) => r.id),
+      rolesName: user.roles.map((r) => r.nombre),
     };
 
     const accessToken = await this.jwt.signAsync(tokenPayload, {
@@ -211,7 +211,7 @@ export class AuthQrService {
       user: {
         nombre: user.nombre,
         nombre_de_usuario: user.nombre_de_usuario,
-        rol: { id: user.rol.id, nombre: user.rol.nombre },
+        roles: user.roles.map((r) => ({ id: r.id, nombre: r.nombre })),
       },
     };
   };
