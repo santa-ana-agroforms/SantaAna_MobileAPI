@@ -16,6 +16,11 @@ export type FormFlatRow = {
   formulario_index_version_id: string;
   formulario_index_version_fecha: Date;
 
+  // 🔽 NUEVO: datos de categoría
+  categoria_id: string | null;
+  categoria_nombre: string | null;
+  categoria_descripcion: string | null;
+
   pagina_id: string;
   pagina_secuencia: number | null;
   pagina_nombre: string;
@@ -24,7 +29,7 @@ export type FormFlatRow = {
   pagina_version_id: string;
   pagina_version_fecha: Date;
 
-  campo_id: string; // <-- ahora sí viene del SELECT
+  campo_id: string; // <-- viene del SELECT
   campo_sequence: number;
   campo_tipo: string;
   campo_clase: string;
@@ -98,6 +103,11 @@ SELECT
   v.formulario_index_version_id               AS formulario_index_version_id,
   v.formulario_index_version_fecha            AS formulario_index_version_fecha,
 
+  -- 🔽 NUEVO: datos de categoría
+  cat.id                                      AS categoria_id,
+  cat.nombre                                  AS categoria_nombre,
+  cat.descripcion                             AS categoria_descripcion,
+
   fp.id_pagina                                AS pagina_id,
   fp.secuencia                                AS pagina_secuencia,
   fp.nombre                                   AS pagina_nombre,
@@ -106,7 +116,7 @@ SELECT
   fpv.id_pagina_version                       AS pagina_version_id,
   fpv.fecha_creacion                          AS pagina_version_fecha,
 
-  fc.id_campo                                  AS campo_id,              -- <-- agregado
+  fc.id_campo                                  AS campo_id,
   fpc.sequence                                AS campo_sequence,
   fc.tipo                                     AS campo_tipo,
   fc.clase                                    AS campo_clase,
@@ -122,6 +132,8 @@ SELECT
 FROM dbo.formularios_formulario f
 JOIN version_vigente v
   ON v.formulario_id = f.id
+LEFT JOIN dbo.formularios_categoria cat           -- 🔽 NUEVO
+  ON cat.id = f.categoria_id
 JOIN dbo.formularios_pagina_index_version fpiv
   ON fpiv.id_index_version = v.formulario_index_version_id
 JOIN dbo.formularios_pagina fp
@@ -156,18 +168,18 @@ WHERE (f.es_publico = 1)
   getFormsFlatAll = async (user: AuthUser): Promise<FormFlatRow[]> => {
     const sql = `${this.baseCteSql}
 ${this.visibleForUserWhere}
-ORDER BY fp.secuencia, fpc.sequence;`;
+ORDER BY categoria_nombre, fp.secuencia, fpc.sequence;`; // 🔽 opcional: categoría primero
     const rows = await this.dataSource.query(sql, [user.nombre_de_usuario]);
     return rows as FormFlatRow[];
   };
 
   // ---------------------------------------------
-  // PLANO: un formulario por ID (sin filtro)  ← si querés mantener compatibilidad
+  // PLANO: un formulario por ID (sin filtro)
   // ---------------------------------------------
   getFormFlatById = async (formId: string): Promise<FormFlatRow[]> => {
     const sql = `${this.baseCteSql}
 WHERE f.id = @0
-ORDER BY fp.secuencia, fpc.sequence;`;
+ORDER BY categoria_nombre, fp.secuencia, fpc.sequence;`; // 🔽 opcional
     const rows = await this.dataSource.query(sql, [formId]);
     return rows as FormFlatRow[];
   };
@@ -192,7 +204,7 @@ WHERE f.id = @0
             AND rf.id_formulario = f.id
         )
   )
-ORDER BY fp.secuencia, fpc.sequence;`;
+ORDER BY categoria_nombre, fp.secuencia, fpc.sequence;`; // 🔽 opcional
     const rows = await this.dataSource.query(sql, [
       formId,
       user.nombre_de_usuario,
@@ -201,7 +213,7 @@ ORDER BY fp.secuencia, fpc.sequence;`;
   };
 
   // ---------------------------------------------
-  // ÁRBOL: un formulario (sin filtro)  ← compatibilidad
+  // ÁRBOL: un formulario (sin filtro)
   // ---------------------------------------------
   getFormTreeById = async (formId: string) => {
     const flat = await this.getFormFlatById(formId);
@@ -225,6 +237,15 @@ ORDER BY fp.secuencia, fpc.sequence;`;
     const flat = await this.getFormsFlatAll(user);
     if (flat.length === 0) return [];
     return this.groupFlatIntoTrees(flat);
+  };
+
+  // ---------------------------------------------
+  // 🔽 NUEVO: Árbol agrupado por categoría (filtrado por usuario)
+  // ---------------------------------------------
+  getFormsTreeAllByCategory = async (user: AuthUser) => {
+    const flat = await this.getFormsFlatAll(user);
+    if (flat.length === 0) return [];
+    return this.groupFlatByCategory(flat);
   };
 
   // ===== Helpers de armado =====
@@ -386,5 +407,138 @@ ORDER BY fp.secuencia, fpc.sequence;`;
 
     result.sort((a, b) => a.id_formulario.localeCompare(b.id_formulario));
     return result;
+  };
+
+  // 🔽 NUEVO: agrupador por categoría con el shape solicitado
+  private groupFlatByCategory = (flat: FormFlatRow[]) => {
+    const catMap = new Map<
+      string,
+      {
+        nombre_categoria: string;
+        descripcion: string | null;
+        formsMap: Map<
+          string,
+          {
+            id_formulario: string;
+            nombre: string;
+            version_vigente: { id_index_version: string; fecha_creacion: Date };
+            paginasMap: Map<
+              string,
+              {
+                id_pagina: string;
+                secuencia: number | null;
+                nombre: string;
+                descripcion: string | null;
+                pagina_version: { id: string; fecha_creacion: Date };
+                campos: Array<{
+                  id_campo: string;
+                  sequence: number;
+                  tipo: string;
+                  clase: string;
+                  nombre_interno: string;
+                  etiqueta: string | null;
+                  ayuda: string | null;
+                  config: unknown | null;
+                  requerido: boolean;
+                }>;
+              }
+            >;
+          }
+        >;
+      }
+    >();
+
+    const keyOf = (r: FormFlatRow) => r.categoria_id ?? '__SIN_CATEGORIA__';
+    const nameOf = (r: FormFlatRow) => r.categoria_nombre ?? 'Sin categoría';
+
+    for (const r of flat) {
+      const key = keyOf(r);
+      if (!catMap.has(key)) {
+        catMap.set(key, {
+          nombre_categoria: nameOf(r),
+          descripcion: r.categoria_descripcion ?? null,
+          formsMap: new Map(),
+        });
+      }
+      const cat = catMap.get(key)!;
+
+      if (!cat.formsMap.has(r.formulario_id)) {
+        cat.formsMap.set(r.formulario_id, {
+          id_formulario: r.formulario_id,
+          nombre: r.formulario_nombre,
+          version_vigente: {
+            id_index_version: r.formulario_index_version_id,
+            fecha_creacion: r.formulario_index_version_fecha,
+          },
+          paginasMap: new Map(),
+        });
+      }
+      const form = cat.formsMap.get(r.formulario_id)!;
+
+      if (!form.paginasMap.has(r.pagina_id)) {
+        form.paginasMap.set(r.pagina_id, {
+          id_pagina: r.pagina_id,
+          secuencia: r.pagina_secuencia ?? null,
+          nombre: r.pagina_nombre,
+          descripcion: r.pagina_descripcion ?? null,
+          pagina_version: {
+            id: r.pagina_version_id,
+            fecha_creacion: r.pagina_version_fecha,
+          },
+          campos: [],
+        });
+      }
+      const pg = form.paginasMap.get(r.pagina_id)!;
+
+      pg.campos.push({
+        id_campo: r.campo_id,
+        sequence: r.campo_sequence,
+        tipo: r.campo_tipo,
+        clase: r.campo_clase,
+        nombre_interno: r.campo_nombre_interno,
+        etiqueta: r.campo_etiqueta ?? null,
+        ayuda: r.campo_ayuda ?? null,
+        config: parseJsonSafe(r.campo_config),
+        requerido: toBool(r.campo_requerido),
+      });
+    }
+
+    // Construcción ordenada
+    const out = Array.from(catMap.values()).map((c) => {
+      const formularios = Array.from(c.formsMap.values()).map((f) => {
+        const paginas = Array.from(f.paginasMap.values()).sort((a, b) => {
+          const sa = a.secuencia ?? 0;
+          const sb = b.secuencia ?? 0;
+          if (sa !== sb) return sa - sb;
+          return a.id_pagina.localeCompare(b.id_pagina);
+        });
+        for (const p of paginas) {
+          p.campos.sort((a, b) =>
+            a.sequence !== b.sequence
+              ? a.sequence - b.sequence
+              : a.id_campo.localeCompare(b.id_campo),
+          );
+        }
+        return {
+          id_formulario: f.id_formulario,
+          nombre: f.nombre,
+          version_vigente: f.version_vigente,
+          paginas,
+        };
+      });
+
+      // orden opcional por nombre de formulario
+      formularios.sort((a, b) => a.nombre.localeCompare(b.nombre));
+
+      return {
+        nombre_categoria: c.nombre_categoria,
+        descripcion: c.descripcion,
+        formularios,
+      };
+    });
+
+    // orden final por nombre de categoría
+    out.sort((a, b) => a.nombre_categoria.localeCompare(b.nombre_categoria));
+    return out;
   };
 }

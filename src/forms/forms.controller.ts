@@ -22,7 +22,7 @@ export class FormsController {
   // GET /forms/tree
   @Get('tree')
   async getFormsTreeAll(@AuthUser() user: TypeAuthUser) {
-    return this.service.getFormsTreeAll(user); // => [<form1>, <form2>, ...]
+    return this.service.getFormsTreeAllByCategory(user); // => [<form1>, <form2>, ...]
   }
 
   // ---- FLAT: todos los formularios (resultado plano)
