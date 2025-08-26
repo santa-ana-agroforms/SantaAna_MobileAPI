@@ -1,23 +1,35 @@
+/* eslint-disable @typescript-eslint/no-unsafe-return */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment */
 // src/forms/forms.controller.ts
-import { Controller, Get, Param, NotFoundException } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Param,
+  NotFoundException,
+  UseGuards,
+} from '@nestjs/common';
 import { FormsService } from './forms.service';
+import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
+import { AuthUser } from 'src/auth/decorators/auth-user.decorator';
+import type { TypeAuthUser } from 'src/auth/decorators/auth-user.decorator';
 
 @Controller('forms')
+@UseGuards(JwtAuthGuard)
 export class FormsController {
   constructor(private readonly service: FormsService) {}
 
   // ---- TREE: todos los formularios en estructura jerárquica
   // GET /forms/tree
   @Get('tree')
-  async getFormsTreeAll() {
-    return this.service.getFormsTreeAll(); // => [<form1>, <form2>, ...]
+  async getFormsTreeAll(@AuthUser() user: TypeAuthUser) {
+    return this.service.getFormsTreeAllByCategory(user); // => [<form1>, <form2>, ...]
   }
 
   // ---- FLAT: todos los formularios (resultado plano)
   // GET /forms/flat
   @Get('flat')
-  async getFormsFlatAll() {
-    return this.service.getFormsFlatAll();
+  async getFormsFlatAll(@AuthUser() user: TypeAuthUser) {
+    return this.service.getFormsFlatAll(user);
   }
 
   // ---- FLAT: un formulario por ID
