@@ -22,6 +22,7 @@ export class FormsController {
   // GET /forms/tree
   @Get('tree')
   async getFormsTreeAll(@AuthUser() user: TypeAuthUser) {
+    console.log(user);
     return this.service.getFormsTreeAllByCategory(user); // => [<form1>, <form2>, ...]
   }
 
