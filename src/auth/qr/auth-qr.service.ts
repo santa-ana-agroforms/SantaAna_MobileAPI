@@ -198,7 +198,7 @@ export class AuthQrService {
 
     const accessToken = await this.jwt.signAsync(tokenPayload, {
       secret: process.env.JWT_SECRET || 'dev-secret',
-      algorithm: 'HS256',
+      algorithm: 'HS384',
       expiresIn: process.env.JWT_EXPIRES_IN || '1h',
     });
 

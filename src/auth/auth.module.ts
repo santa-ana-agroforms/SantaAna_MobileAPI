@@ -20,7 +20,7 @@ import { AuthQrService } from './qr/auth-qr.service';
       // valores por defecto; usa .env en runtime
       secret: process.env.JWT_SECRET || 'dev-secret',
       signOptions: {
-        algorithm: 'HS256',
+        algorithm: 'HS384',
         expiresIn: process.env.JWT_EXPIRES_IN || '1h',
       },
     }),

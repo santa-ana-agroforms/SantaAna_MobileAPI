@@ -4,11 +4,13 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { typeOrmAsyncConfig } from './config/typeorm.config';
 import { FormsModule } from './forms/forms.module';
 import { AuthModule } from './auth/auth.module';
+import { GroupsModule } from './groups/groups.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, envFilePath: '.env' }),
     TypeOrmModule.forRootAsync(typeOrmAsyncConfig),
+    GroupsModule,
     FormsModule,
     AuthModule,
   ],
