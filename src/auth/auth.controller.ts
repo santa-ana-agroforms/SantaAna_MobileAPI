@@ -10,6 +10,6 @@ export class AuthController {
   @Post('login')
   @HttpCode(HttpStatus.OK)
   async login(@Body() dto: LoginDto) {
-    return this.auth.login(dto.nombre_de_usuario, dto.password);
+    return this.auth.login(dto.nombre_usuario, dto.password);
   }
 }

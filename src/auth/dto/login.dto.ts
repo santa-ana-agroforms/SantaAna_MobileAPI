@@ -6,7 +6,7 @@ export class LoginDto {
   @ApiProperty({ minLength: 3 })
   @IsString()
   @MinLength(3)
-  nombre_de_usuario!: string;
+  nombre_usuario!: string;
 
   @ApiProperty({ minLength: 8 })
   @IsString()

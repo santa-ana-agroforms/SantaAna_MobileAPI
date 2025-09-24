@@ -5,10 +5,10 @@ INSERT INTO dbo.formularios_rol (id, nombre, descripcion) VALUES ('868efab65dca4
 
 
     INSERT INTO dbo.formularios_usuarios
-        (nombre, telefono, correo, contrasena, rol_id, nombre_de_usuario)
+        (nombre, telefono, correo, contrasena, rol_id, nombre_usuario)
     VALUES ('Daniel Valdez', '502-5555-5555', 'danval@example.com', '$argon2id$v=19$m=65536,t=3,p=1$JUF0lwPgn8xjA+F/ZNSlgQ$+XjSn7Z3woTfvM1lXZr6MUcuZe0AGK/8TJrkbrpi5+k', '868efab65dca4b9db64d086437e108e0', 'danival');
 
-INSERT INTO dbo.formularios_rol_user (id_rol, nombre_de_usuario) VALUES ('868efab65dca4b9db64d086437e108e0', 'danival');
+INSERT INTO dbo.formularios_rol_user (id_rol, nombre_usuario) VALUES ('868efab65dca4b9db64d086437e108e0', 'danival');
 
 
         IF NOT EXISTS (SELECT 1 FROM dbo.formularios_clase_campo WHERE clase = 'boolean')

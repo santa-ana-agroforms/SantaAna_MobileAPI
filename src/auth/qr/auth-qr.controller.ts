@@ -24,7 +24,7 @@ export class AuthQrController {
   @Roles('Administrador') // ajustá al nombre real de tu rol admin
   @ApiOperation({ summary: 'Crear sesión QR ligada a un usuario' })
   async startForUser(@Body() body: OnlyUserName) {
-    return this.svc.startForUser(body.nombre_de_usuario);
+    return this.svc.startForUser(body.nombre_usuario);
   }
 
   // Móvil: login desde QR (no requiere estar logueado antes)

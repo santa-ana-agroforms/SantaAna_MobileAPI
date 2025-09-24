@@ -140,9 +140,9 @@ export class AuthQrService {
   ): Promise<{ sid: string; qr: string; expiresIn: number }> => {
     // Verificar que exista el usuario, para no generar QR inválido
     const user = await this.usersRepo.findOne({
-      where: { nombre_de_usuario: targetUsername },
+      where: { nombre_usuario: targetUsername },
       relations: { roles: true },
-      select: ['nombre_de_usuario'], // consulta mínima
+      select: ['nombre_usuario'], // consulta mínima
     });
     if (!user) throw new BadRequestException('Usuario destino no existe');
 
@@ -184,14 +184,14 @@ export class AuthQrService {
 
     // Cargar user y su rol
     const user = await this.usersRepo.findOne({
-      where: { nombre_de_usuario: sess.targetUsername },
+      where: { nombre_usuario: sess.targetUsername },
       relations: { roles: true },
     });
     if (!user) throw new UnauthorizedException('Usuario no encontrado');
 
     // Tu payload (sin sub): username + rol
     const tokenPayload = {
-      username: user.nombre_de_usuario,
+      username: user.nombre_usuario,
       rolesId: user.roles.map((r) => r.id),
       rolesName: user.roles.map((r) => r.nombre),
     };
@@ -210,7 +210,7 @@ export class AuthQrService {
       access_token: accessToken,
       user: {
         nombre: user.nombre,
-        nombre_de_usuario: user.nombre_de_usuario,
+        nombre_usuario: user.nombre_usuario,
         roles: user.roles.map((r) => ({ id: r.id, nombre: r.nombre })),
       },
     };

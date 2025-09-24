@@ -18,37 +18,22 @@ import type { TypeAuthUser } from 'src/auth/decorators/auth-user.decorator';
 export class FormsController {
   constructor(private readonly service: FormsService) {}
 
-  // ---- TREE: todos los formularios en estructura jerárquica
+  // ---- TREE: todos los formularios en estructura jerárquica (filtrado por roles del usuario)
   // GET /forms/tree
   @Get('tree')
   async getFormsTreeAll(@AuthUser() user: TypeAuthUser) {
-    console.log(user);
-    return this.service.getFormsTreeAllByCategory(user); // => [<form1>, <form2>, ...]
+    console.log('FormsController.getFormsTreeAll user:', user);
+    return this.service.getFormsTreeAllByCategory(user);
   }
 
-  // ---- FLAT: todos los formularios (resultado plano)
-  // GET /forms/flat
-  @Get('flat')
-  async getFormsFlatAll(@AuthUser() user: TypeAuthUser) {
-    return this.service.getFormsFlatAll(user);
-  }
-
-  // ---- FLAT: un formulario por ID
-  // GET /forms/:id/flat
-  @Get(':id/flat')
-  async getFormFlatById(@Param('id') id: string) {
-    const rows = await this.service.getFormFlatById(id);
-    if (!rows?.length) {
-      throw new NotFoundException(`Formulario ${id} no encontrado o sin datos`);
-    }
-    return rows;
-  }
-
-  // ---- TREE: un formulario por ID (versión vigente → páginas → campos)
+  // ---- TREE: un formulario por ID (filtrado por roles del usuario)
   // GET /forms/:id/tree
   @Get(':id/tree')
-  async getFormTreeById(@Param('id') id: string) {
-    const tree = await this.service.getFormTreeById(id);
+  async getFormTreeById(
+    @Param('id') id: string,
+    @AuthUser() user: TypeAuthUser,
+  ) {
+    const tree = await this.service.getFormTreeByIdForUser(id, user);
     if (!tree) {
       throw new NotFoundException(`Formulario ${id} no encontrado o sin datos`);
     }
