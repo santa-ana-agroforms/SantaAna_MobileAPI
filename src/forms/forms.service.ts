@@ -157,19 +157,68 @@ WHERE (f.es_publico = 1)
         FROM dbo.formularios_rol_formulario rf
         JOIN dbo.formularios_rol_user ru
           ON ru.id_rol = rf.rol_id
-        WHERE ru.nombre_de_usuario = @0
+        WHERE ru.nombre_usuario = @0
           AND rf.id_formulario = f.id
       )
 `;
+
+  // ===========================
+  // 🔽 NUEVO: helpers por roles
+  // ===========================
+  private buildWhereByRoles = (
+    roleIds: Array<string | number>,
+    opts?: { includePublic?: boolean },
+  ) => {
+    const includePublic = opts?.includePublic ?? false; // por defecto: ESTRICTO por rol
+    if (!roleIds?.length) {
+      // Sin roles: o solo públicos o nada
+      return {
+        where: includePublic ? `WHERE f.es_publico = 1` : `WHERE 1 = 0`,
+        params: [] as any[],
+      };
+    }
+    const placeholders = roleIds.map((_, i) => `@${i}`).join(', ');
+    const publicClause = includePublic ? ` OR f.es_publico = 1` : ``;
+    return {
+      where: `
+WHERE (
+  EXISTS (
+    SELECT 1
+    FROM dbo.formularios_rol_formulario rf
+    WHERE rf.id_formulario = f.id
+      AND rf.rol_id IN (${placeholders})     -- OJO: si tu columna es id_rol, cámbiala acá
+  )${publicClause}
+)
+`,
+      params: roleIds,
+    };
+  };
 
   // ---------------------------------------------
   // PLANO: todos los formularios (filtrado por usuario)
   // ---------------------------------------------
   getFormsFlatAll = async (user: AuthUser): Promise<FormFlatRow[]> => {
+    // Preferir roles del objeto user
+    const roleIds = Array.isArray((user as any)?.roles)
+      ? (user as any).roles
+          .map((r: any) => (r?.id != null ? String(r.id) : null))
+          .filter((x: any) => x != null)
+      : [];
+
+    if (roleIds.length > 0) {
+      const built = this.buildWhereByRoles(roleIds, { includePublic: false });
+      const sql = `${this.baseCteSql}
+${built.where}
+ORDER BY categoria_nombre, fp.secuencia, fpc.sequence;`;
+      const rows = await this.dataSource.query(sql, built.params);
+      return rows as FormFlatRow[];
+    }
+
+    // Fallback: nombre_usuario (comportamiento previo)
     const sql = `${this.baseCteSql}
 ${this.visibleForUserWhere}
 ORDER BY categoria_nombre, fp.secuencia, fpc.sequence;`; // 🔽 opcional: categoría primero
-    const rows = await this.dataSource.query(sql, [user.nombre_de_usuario]);
+    const rows = await this.dataSource.query(sql, [user.nombre_usuario]);
     return rows as FormFlatRow[];
   };
 
@@ -191,6 +240,29 @@ ORDER BY categoria_nombre, fp.secuencia, fpc.sequence;`; // 🔽 opcional
     formId: string,
     user: AuthUser,
   ): Promise<FormFlatRow[]> => {
+    const roleIds = Array.isArray((user as any)?.roles)
+      ? (user as any).roles
+          .map((r: any) => (r?.id != null ? String(r.id) : null))
+          .filter((x: any) => x != null)
+      : [];
+
+    if (roleIds.length > 0) {
+      const placeholders = roleIds.map((_, i) => `@${i + 1}`).join(', ');
+      const sql = `${this.baseCteSql}
+WHERE f.id = @0
+  AND EXISTS (
+        SELECT 1
+        FROM dbo.formularios_rol_formulario rf
+        WHERE rf.id_formulario = f.id
+          AND rf.rol_id IN (${placeholders})     -- OJO: si tu columna es id_rol, cámbiala acá
+      )
+ORDER BY categoria_nombre, fp.secuencia, fpc.sequence;`; // 🔽 opcional
+
+      const rows = await this.dataSource.query(sql, [formId, ...roleIds]);
+      return rows as FormFlatRow[];
+    }
+
+    // Fallback por nombre_usuario (comportamiento previo)
     const sql = `${this.baseCteSql}
 WHERE f.id = @0
   AND (
@@ -200,14 +272,14 @@ WHERE f.id = @0
           FROM dbo.formularios_rol_formulario rf
           JOIN dbo.formularios_rol_user ru
             ON ru.id_rol = rf.rol_id
-          WHERE ru.nombre_de_usuario = @1
+          WHERE ru.nombre_usuario = @1
             AND rf.id_formulario = f.id
         )
   )
 ORDER BY categoria_nombre, fp.secuencia, fpc.sequence;`; // 🔽 opcional
     const rows = await this.dataSource.query(sql, [
       formId,
-      user.nombre_de_usuario,
+      user.nombre_usuario,
     ]);
     return rows as FormFlatRow[];
   };

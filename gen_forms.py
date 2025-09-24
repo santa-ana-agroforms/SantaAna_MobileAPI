@@ -389,13 +389,13 @@ def create_user_with_role(
     # dbo.formularios_usuarios (ledger: NO insertar ledger_*)
     sql = """
     INSERT INTO dbo.formularios_usuarios
-        (nombre, telefono, correo, contrasena, rol_id, nombre_de_usuario)
+        (nombre, telefono, correo, contrasena, rol_id, nombre_usuario)
     VALUES (?, ?, ?, ?, ?, ?)
     """
     em.exec(sql, (name, phone, email, pwd_hash, role_id, username))
 
     # dbo.formularios_rol_user (ledger: NO insertar ledger_*)
-    sql2 = "INSERT INTO dbo.formularios_rol_user (id_rol, nombre_de_usuario) VALUES (?, ?)"
+    sql2 = "INSERT INTO dbo.formularios_rol_user (id_rol, nombre_usuario) VALUES (?, ?)"
     em.exec(sql2, (role_id, username))
 
     return username, pwd

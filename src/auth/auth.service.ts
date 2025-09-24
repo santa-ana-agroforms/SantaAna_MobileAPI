@@ -14,10 +14,10 @@ export class AuthService {
     private readonly jwt: JwtService,
   ) {}
 
-  login = async (nombre_de_usuario: string, plainPassword: string) => {
+  login = async (nombre_usuario: string, plainPassword: string) => {
     // Busca por username (no por email)
     const user = await this.usersRepo.findOne({
-      where: { nombre_de_usuario },
+      where: { nombre_usuario },
       relations: { roles: true },
     });
     if (!user) throw new UnauthorizedException('Credenciales inválidas');
@@ -26,7 +26,7 @@ export class AuthService {
     if (!ok) throw new UnauthorizedException('Credenciales inválidas');
 
     const payload: JwtPayload = {
-      username: user.nombre_de_usuario,
+      username: user.nombre_usuario,
       rolesId: user.roles.map((r) => r.id),
       rolesName: user.roles.map((r) => r.nombre),
     };
@@ -41,7 +41,7 @@ export class AuthService {
       access_token: accessToken,
       user: {
         nombre: user.nombre,
-        nombre_de_usuario: user.nombre_de_usuario,
+        nombre_usuario: user.nombre_usuario,
         roles: user.roles.map((r) => ({ id: r.id, nombre: r.nombre })),
       },
     };
