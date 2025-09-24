@@ -72,7 +72,7 @@ WITH ult_version_pagina AS (
       FROM dbo.formularios_rol_formulario rf
       JOIN dbo.formularios_rol_user ru
         ON ru.id_rol = rf.rol_id
-     WHERE ru.nombre_de_usuario = @0
+     WHERE ru.nombre_usuario = @0
        AND rf.id_formulario = f.id
   )
 `;
@@ -119,7 +119,7 @@ JOIN dbo.formularios_formulario f
 WHERE ${this.visibleForUser}
 ORDER BY g.nombre, fp.secuencia, fpc.sequence, fc.id_campo;
 `;
-    const rows = await this.dataSource.query(sql, [user.nombre_de_usuario]);
+    const rows = await this.dataSource.query(sql, [user.nombre_usuario]);
     return rows as GroupFlatRow[];
   }
 
@@ -170,7 +170,7 @@ ORDER BY g.nombre, fp.secuencia, fpc.sequence, fc.id_campo;
 `;
     const rows = await this.dataSource.query(sql, [
       id_grupo,
-      user.nombre_de_usuario,
+      user.nombre_usuario,
     ]);
     return rows as GroupFlatRow[];
   }

@@ -6,7 +6,7 @@ export class OnlyUserName {
   @ApiProperty()
   @IsString()
   @MinLength(3)
-  nombre_de_usuario!: string;
+  nombre_usuario!: string;
 }
 
 export class LoginQrDto {
