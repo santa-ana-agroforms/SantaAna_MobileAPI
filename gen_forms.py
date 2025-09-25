@@ -1,19 +1,19 @@
 ﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Generador de formularios (categorÃ­as, versiones, pÃ¡ginas, campos y grupos) + usuario/rol dedicado.
+Generador de formularios (categorí­as, versiones, páginas, campos y grupos) + usuario/rol dedicado.
 
 Novedades:
 - --create-user crea:
     1) Rol exclusivo en dbo.formularios_rol (sin ledger_*).
-    2) Usuario en dbo.formularios_usuarios con contraseÃ±a Argon2 (sin ledger_*).
-    3) RelaciÃ³n en dbo.formularios_rol_user (sin ledger_*).
+    2) Usuario en dbo.formularios_usuario con contraseña Argon2 (sin ledger_*).
+    3) Relación en dbo.formularios_rol_user (sin ledger_*).
     4) Asigna TODOS los formularios generados a ese rol en dbo.formularios_rol_formulario (sin ledger_*).
-- --export-credentials escribe TXT con usuario + contraseÃ±a en claro (DB guarda solo hash).
-- CategorÃ­as aleatorias y distribuciÃ³n de formularios por categorÃ­a (igual que versiÃ³n previa).
-- Grupos como campos (clase 'group'), tabla formularios_grupo y relaciÃ³n formularios_campo_grupo (sin ledger_*).
+- --export-credentials escribe TXT con usuario + contraseña en claro (DB guarda solo hash).
+- Categorí­as aleatorias y distribución de formularios por categorí­a (igual que versión previa).
+- Grupos como campos (clase 'group'), tabla formularios_grupo y relación formularios_campo_grupo (sin ledger_*).
 
-Uso tÃ­pico:
+Uso tí­pico:
   python generador_formularios_sqlserver.py \
     --emit-sql ./carga_formularios.sql \
     --categories-count 4 --forms-per-category 3 \
@@ -36,7 +36,7 @@ try:
 except Exception:
     pyodbc = None  # permite --emit-sql sin pyodbc
 
-# Argon2 para hashear contraseÃ±as
+# Argon2 para hashear contraseñas
 _HAS_ARGON2 = True
 try:
     from argon2.low_level import hash_secret, Type  # type: ignore
@@ -48,7 +48,7 @@ except Exception:
 # ========= Utilidades =========
 
 def hex32() -> str:
-    return uuid.uuid4().hex  # 32 chars minÃºsculas sin guiones
+    return uuid.uuid4().hex  # 32 chars miníºsculas sin guiones
 
 def pick(seq):
     return random.choice(seq)
@@ -68,7 +68,7 @@ def rand_text(min_len=10, max_len=40) -> str:
 
 def rand_label() -> str:
     prefixes = ["Peso", "Altura", "Humedad", "Temperatura", "Operario", "Finca", "Lote",
-                "CÃ³digo", "DescripciÃ³n", "Comentario", "Variedad", "Rendimiento"]
+                "Código", "Descripción", "Comentario", "Variedad", "Rendimiento"]
     return f"{pick(prefixes)} {random.randint(1, 999)}"
 
 def rand_unit() -> Optional[str]:
@@ -191,7 +191,7 @@ class SqlEmitter:
         self.emit_sql_path = emit_sql_path
         self._lines: List[str] = []
         if self.emit_sql_path:
-            self._lines.append("-- Archivo generado automÃ¡ticamente")
+            self._lines.append("-- Archivo generado automáticamente")
             self._lines.append("SET NOCOUNT ON;")
             self._lines.append("")
 
@@ -248,7 +248,7 @@ def ensure_clases_campo(em: SqlEmitter):
 def ensure_categoria(em: SqlEmitter, nombre_base: str) -> str:
     cat_id = hex32()
     unique_name = f"{nombre_base.strip()} {random.randint(1, 9999)}"
-    desc = f"CategorÃ­a auto {unique_name}"
+    desc = f"Categorí­a auto {unique_name}"
     sql = "INSERT INTO dbo.formularios_categoria (id, nombre, descripcion) VALUES (?, ?, ?)"
     em.exec(sql, (cat_id, unique_name, desc))
     return cat_id
@@ -299,7 +299,7 @@ def insert_index_version(em: SqlEmitter, formulario_id: str) -> str:
 
 def insert_pagina(em: SqlEmitter, formulario_id: str, index_version_id: str, secuencia: int) -> str:
     pid = hex32()
-    nombre = f"PÃ¡gina {secuencia}"
+    nombre = f"Página {secuencia}"
     descripcion = rand_text(30, 90)
     sql = """
     INSERT INTO dbo.formularios_pagina
@@ -386,9 +386,9 @@ def create_user_with_role(
     pwd = plain_password or random_password()
     pwd_hash = hash_password_argon2(pwd)
 
-    # dbo.formularios_usuarios (ledger: NO insertar ledger_*)
+    # dbo.formularios_usuario (ledger: NO insertar ledger_*)
     sql = """
-    INSERT INTO dbo.formularios_usuarios
+    INSERT INTO dbo.formularios_usuario
         (nombre, telefono, correo, contrasena, rol_id, nombre_usuario)
     VALUES (?, ?, ?, ?, ?, ?)
     """
@@ -431,7 +431,7 @@ def gen_config_para_clase(clase: str) -> Dict[str, Any]:
     if clase == "firm":
         return {}
     if clase == "group":
-        # Se define al crear el grupo (id/nombre). AquÃ­ placeholder por si acaso.
+        # Se define al crear el grupo (id/nombre). Aquí­ placeholder por si acaso.
         return {"id_group": "", "name": "", "fieldCondition": "always"}
     if clase == "hour":
         return {}
@@ -459,14 +459,14 @@ def gen_config_para_clase(clase: str) -> Dict[str, Any]:
     return {}
 
 
-# ========= CategorÃ­as aleatorias =========
+# ========= Categorí­as aleatorias =========
 
 CATEGORY_NAME_POOL = [
     "Cosecha", "Corte", "Transporte", "Mantenimiento", "Fertirriego",
     "Riego", "Aplicaciones", "Calidad", "Bodega", "Seguridad",
-    "MecÃ¡nica", "ElÃ©ctrico", "TopografÃ­a", "Laboratorio", "Empaque",
+    "Mecánica", "Elí©ctrico", "Topografí­a", "Laboratorio", "Empaque",
     "Siembra", "Siembra Mecanizada", "Cosecha Manual", "Vivero", "Sanidad",
-    "Rutas", "LogÃ­stica", "ProducciÃ³n", "RRHH Campo", "CapacitaciÃ³n"
+    "Rutas", "Logí­stica", "Producción", "RRHH Campo", "Capacitación"
 ]
 
 def build_random_category_names(n: int) -> List[str]:
@@ -481,7 +481,7 @@ def build_random_category_names(n: int) -> List[str]:
     return names[:n]
 
 
-# ========= GeneraciÃ³n principal =========
+# ========= Generación principal =========
 
 def _parse_forms_by_category_map(spec: str) -> Dict[str, int]:
     result: Dict[str, int] = {}
@@ -490,15 +490,15 @@ def _parse_forms_by_category_map(spec: str) -> Dict[str, int]:
         if not part:
             continue
         if ":" not in part:
-            raise ValueError(f"Entrada invÃ¡lida '{part}'. Formato esperado: Nombre:Cantidad")
+            raise ValueError(f"Entrada inválida '{part}'. Formato esperado: Nombre:Cantidad")
         name, cnt = part.split(":", 1)
         name = name.strip()
         cnt = cnt.strip()
         if not name or not cnt.isdigit():
-            raise ValueError(f"Par invÃ¡lido '{part}'. Ejemplo: Corte:2")
+            raise ValueError(f"Par inválido '{part}'. Ejemplo: Corte:2")
         result[name] = int(cnt)
     if not result:
-        raise ValueError("Mapa vacÃ­o en --forms-by-category.")
+        raise ValueError("Mapa vací­o en --forms-by-category.")
     return result
 
 def generate(
@@ -521,15 +521,15 @@ def generate(
 ) -> Tuple[List[str], Dict[str, str]]:
     """Genera formularios y retorna:
        - forms_created: lista de IDs de formularios creados
-       - cat_ids_by_name: mapa nombre->id de categorÃ­as creadas
+       - cat_ids_by_name: mapa nombre->id de categorí­as creadas
     """
     ensure_clases_campo(em)
 
-    # Resolver categorÃ­as
+    # Resolver categorí­as
     default_cats = ["Corte", "Transporte", "Mantenimiento", "Fertirriego", "Cosecha"]
     if categories and len(categories) > 0:
         cat_names = categories
-        origin = "explÃ­citas (--categories)"
+        origin = "explí­citas (--categories)"
     elif categories_count and categories_count > 0:
         cat_names = build_random_category_names(categories_count)
         origin = f"aleatorias (--categories-count={categories_count})"
@@ -540,8 +540,8 @@ def generate(
     cat_ids_by_name: Dict[str, str] = {n: ensure_categoria(em, n) for n in cat_names}
     cat_id_list = list(cat_ids_by_name.values())
 
-    em.comment(f"Origen de categorÃ­as: {origin}")
-    em.comment("Resumen de categorÃ­as (nombre -> id) para esta corrida:")
+    em.comment(f"Origen de categorí­as: {origin}")
+    em.comment("Resumen de categorí­as (nombre -> id) para esta corrida:")
     for n, cid in cat_ids_by_name.items():
         em.comment(f"  - {n} -> {cid}")
     em.comment("")
@@ -589,23 +589,23 @@ def generate(
                     miembros = random.sample(non_group_campos, k=k)
                     for cid_ in miembros:
                         link_campo_a_grupo(em, grupo_info["group_id"], cid_)
-                    em.comment(f"PÃ¡gina {pseq}: grupo '{grupo_info['name']}' ({grupo_info['group_id']}) con {k} campo(s) asociado(s).")
+                    em.comment(f"Página {pseq}: grupo '{grupo_info['name']}' ({grupo_info['group_id']}) con {k} campo(s) asociado(s).")
 
-    # DistribuciÃ³n por categorÃ­a
+    # Distribución por categorí­a
     if forms_by_category:
         total = sum(forms_by_category.values())
-        em.comment(f"DistribuciÃ³n exacta por categorÃ­a (total formularios = {total}):")
+        em.comment(f"Distribución exacta por categorí­a (total formularios = {total}):")
         for n, c in forms_by_category.items():
             em.comment(f"  - {n}: {c}")
             if n not in cat_ids_by_name:
-                raise ValueError(f"La categorÃ­a '{n}' indicada en --forms-by-category no estÃ¡ en --categories.")
+                raise ValueError(f"La categorí­a '{n}' indicada en --forms-by-category no está en --categories.")
         for n, count in forms_by_category.items():
             for _ in range(count):
                 _gen_form_for_category(cat_ids_by_name[n])
         return forms_created, cat_ids_by_name
 
     if forms_per_category is not None:
-        em.comment(f"DistribuciÃ³n fija: {forms_per_category} formulario(s) por categorÃ­a.")
+        em.comment(f"Distribución fija: {forms_per_category} formulario(s) por categorí­a.")
         for cid in cat_id_list:
             for _ in range(forms_per_category):
                 _gen_form_for_category(cid)
@@ -614,17 +614,17 @@ def generate(
     if (min_forms_per_category is not None) and (max_forms_per_category is not None):
         if min_forms_per_category > max_forms_per_category:
             raise ValueError("--min-forms-per-category no puede ser mayor que --max-forms-per-category.")
-        em.comment(f"DistribuciÃ³n aleatoria por categorÃ­a en rango [{min_forms_per_category}, {max_forms_per_category}].")
+        em.comment(f"Distribución aleatoria por categorí­a en rango [{min_forms_per_category}, {max_forms_per_category}].")
         total = 0
         for cid in cat_id_list:
             k = random.randint(min_forms_per_category, max_forms_per_category)
             total += k
             for _ in range(k):
                 _gen_form_for_category(cid)
-        em.comment(f"Total de formularios generados (suma por categorÃ­a): {total}")
+        em.comment(f"Total de formularios generados (suma por categorí­a): {total}")
         return forms_created, cat_ids_by_name
 
-    em.comment(f"DistribuciÃ³n aleatoria global entre {len(cat_ids_by_name)} categorÃ­a(s).")
+    em.comment(f"Distribución aleatoria global entre {len(cat_ids_by_name)} categorí­a(s).")
     for _ in range(n_forms):
         _gen_form_for_category(pick(cat_id_list))
     return forms_created, cat_ids_by_name
@@ -633,15 +633,15 @@ def generate(
 # ========= CLI =========
 
 def main():
-    parser = argparse.ArgumentParser(description="Generador aleatorio de formularios con pÃ¡ginas/campos/grupos + usuario/rol.")
-    # ConexiÃ³n
+    parser = argparse.ArgumentParser(description="Generador aleatorio de formularios con páginas/campos/grupos + usuario/rol.")
+    # Conexión
     parser.add_argument("--server", type=str)
     parser.add_argument("--database", type=str)
     parser.add_argument("--user", type=str)
     parser.add_argument("--password", type=str)
     parser.add_argument("--driver", type=str, default="{ODBC Driver 17 for SQL Server}")
 
-    # ParÃ¡metros del generador
+    # Parámetros del generador
     parser.add_argument("--forms", type=int, default=2)
     parser.add_argument("--min-versions", type=int, default=1)
     parser.add_argument("--max-versions", type=int, default=2)
@@ -650,7 +650,7 @@ def main():
     parser.add_argument("--min-fields", type=int, default=3)
     parser.add_argument("--max-fields", type=int, default=6)
 
-    # CategorÃ­as
+    # Categorí­as
     parser.add_argument("--categories", type=str, help='CSV: "Corte,Transporte,..."')
     parser.add_argument("--categories-count", type=int, default=None)
     parser.add_argument("--forms-by-category", dest="forms_by_category", type=str)
@@ -659,7 +659,7 @@ def main():
     parser.add_argument("--max-forms-per-category", type=int, default=None)
     parser.add_argument("--list-categories", action="store_true")
 
-    # Reproducibilidad y emisiÃ³n
+    # Reproducibilidad y emisión
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--emit-sql", type=str, default=None)
 
@@ -671,13 +671,13 @@ def main():
     parser.add_argument("--user-phone", type=str, default="502-0000-0000")
     parser.add_argument("--user-email", type=str, default=None)
     parser.add_argument("--user-role-name", type=str, default=None, help="Nombre opcional del rol exclusivo.")
-    parser.add_argument("--export-credentials", type=str, default=None, help="Ruta TXT para guardar usuario y contraseÃ±a en claro.")
+    parser.add_argument("--export-credentials", type=str, default=None, help="Ruta TXT para guardar usuario y contraseña en claro.")
 
     args = parser.parse_args()
     if args.seed is not None:
         random.seed(args.seed)
 
-    # Parse categorÃ­as explÃ­citas
+    # Parse categorí­as explí­citas
     categories: Optional[List[str]] = None
     if args.categories:
         categories = [c.strip() for c in args.categories.split(",") if c.strip()]
@@ -690,24 +690,24 @@ def main():
     if args.list_categories:
         if categories and len(categories) > 0:
             cat_names = categories
-            origin = "explÃ­citas (--categories)"
+            origin = "explí­citas (--categories)"
         elif args.categories_count and args.categories_count > 0:
             cat_names = build_random_category_names(args.categories_count)
             origin = f"aleatorias (--categories-count={args.categories_count})"
         else:
             cat_names = ["Corte", "Transporte", "Mantenimiento", "Fertirriego", "Cosecha"]
             origin = "por defecto"
-        print(f"[INFO] CategorÃ­as previstas ({origin}): {', '.join(cat_names)}")
+        print(f"[INFO] Categorí­as previstas ({origin}): {', '.join(cat_names)}")
         if forms_by_category:
             total = sum(forms_by_category.values())
-            print(f"[INFO] DistribuciÃ³n exacta (total {total}):")
+            print(f"[INFO] Distribución exacta (total {total}):")
             for n, c in forms_by_category.items():
                 print(f"  - {n}: {c}")
         elif args.forms_per_category is not None:
             total = len(cat_names) * args.forms_per_category
-            print(f"[INFO] {args.forms_per_category} formulario(s) por categorÃ­a. Total = {total}.")
+            print(f"[INFO] {args.forms_per_category} formulario(s) por categorí­a. Total = {total}.")
         elif args.min_forms_per_category is not None and args.max_forms_per_category is not None:
-            print(f"[INFO] Rango por categorÃ­a: [{args.min_forms_per_category}, {args.max_forms_per_category}].")
+            print(f"[INFO] Rango por categorí­a: [{args.min_forms_per_category}, {args.max_forms_per_category}].")
         else:
             print(f"[INFO] Reparto aleatorio global. Total formularios: {args.forms}")
         return
@@ -717,10 +717,10 @@ def main():
         em = SqlEmitter(cnxn=None, emit_sql_path=args.emit_sql)
     else:
         if not all([args.server, args.database, args.user, args.password]):
-            print("Faltan parÃ¡metros de conexiÃ³n. Use --emit-sql o provea --server/--database/--user/--password.")
+            print("Faltan parámetros de conexión. Use --emit-sql o provea --server/--database/--user/--password.")
             sys.exit(1)
         if pyodbc is None:
-            print("pyodbc no estÃ¡ instalado. Use --emit-sql o instale pyodbc.")
+            print("pyodbc no está instalado. Use --emit-sql o instale pyodbc.")
             sys.exit(1)
         conn_str = (
             f"DRIVER={args.driver};"
@@ -733,7 +733,7 @@ def main():
         cnxn = pyodbc.connect(conn_str, autocommit=False)
         em = SqlEmitter(cnxn=cnxn)
 
-    # --- Crear rol/usuario si se solicitÃ³ (antes de generar formularios para poder ligar) ---
+    # --- Crear rol/usuario si se solicitó (antes de generar formularios para poder ligar) ---
     role_id_for_run: Optional[str] = None
     new_username: Optional[str] = None
     new_plain_password: Optional[str] = None
@@ -752,7 +752,7 @@ def main():
             # 1) rol exclusivo
             role_id_for_run = create_role_exclusive(em, username, role_name=args.user_role_name)
 
-            # 2) usuario + relaciÃ³n
+            # 2) usuario + relación
             new_plain_password = args.user_password or random_password()
             new_username, _pwd = create_user_with_role(
                 em,
@@ -811,7 +811,7 @@ def main():
 
     except Exception as e:
         if not args.emit_sql:
-            # rollback solo si hay conexiÃ³n real
+            # rollback solo si hay conexión real
             try:
                 em.cnxn.rollback()  # type: ignore[attr-defined]
             except Exception:
@@ -819,7 +819,7 @@ def main():
         print("[ERROR]", e)
         raise
     finally:
-        # cerrar conexiÃ³n si aplica
+        # cerrar conexión si aplica
         if not args.emit_sql:
             try:
                 em.cnxn.close()  # type: ignore[attr-defined]
