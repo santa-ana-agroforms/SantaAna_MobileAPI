@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-call */
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
@@ -60,6 +61,10 @@ async function bootstrap() {
       'access-token',
     )
     .addSecurityRequirements('access-token')
+    .addApiKey(
+      { type: 'apiKey', name: 'x-api-key', in: 'header' },
+      'apiKey', // <- Este nombre debe coincidir con ApiSecurity('apiKey')
+    )
     .build();
 
   const document = SwaggerModule.createDocument(app, config, {
