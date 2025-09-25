@@ -8,6 +8,7 @@ import {
   BadRequestException,
   UnauthorizedException,
   Logger,
+  ForbiddenException,
 } from '@nestjs/common';
 import { randomBytes, createHmac } from 'crypto';
 import { JwtService } from '@nestjs/jwt';
@@ -53,6 +54,49 @@ export class AuthQrService {
     private readonly jwt: JwtService,
     @InjectRepository(User) private readonly usersRepo: Repository<User>,
   ) {}
+
+  // ========= Helper central: validar usuario “slim” =========
+  /**
+   * Valida que el usuario exista, esté activo y (opcional) tenga roles.
+   * Devuelve un objeto “slim” sin la contraseña.
+   */
+  private async getValidatedUserSlim(nombreUsuario: string): Promise<{
+    nombre_usuario: string;
+    nombre: string;
+    activo: boolean;
+    roles: { id: number; nombre: string }[];
+  }> {
+    // OJO con TypeORM: si usás select parcial + relations, usá la sintaxis de selección anidada
+    const user = await this.usersRepo.findOne({
+      where: { nombre_usuario: nombreUsuario },
+      relations: { roles: true },
+      select: {
+        nombre_usuario: true,
+        nombre: true,
+        activo: true,
+        // contrasena: false, // por si querés ser explícito
+        roles: { id: true, nombre: true },
+      },
+    });
+
+    if (!user) {
+      throw new BadRequestException('El usuario destino no existe');
+    }
+    if (user.activo === false) {
+      throw new ForbiddenException('El usuario está inactivo');
+    }
+    // Si tu seguridad exige rol asignado, valida:
+    if (!user.roles || user.roles.length === 0) {
+      throw new ForbiddenException('El usuario no tiene roles asignados');
+    }
+
+    return {
+      nombre_usuario: user.nombre_usuario,
+      nombre: user.nombre,
+      activo: user.activo,
+      roles: user.roles.map((r) => ({ id: Number(r.id), nombre: r.nombre })),
+    };
+  }
 
   // ========= Helper de render con logo centrado (PNG DataURL) =========
   private makeQrDataUrl = async (payload: string, opts: QrRenderOpts = {}) => {
@@ -138,17 +182,11 @@ export class AuthQrService {
   startForUser = async (
     targetUsername: string,
   ): Promise<{ sid: string; qr: string; expiresIn: number }> => {
-    // Verificar que exista el usuario, para no generar QR inválido
-    const user = await this.usersRepo.findOne({
-      where: { nombre_usuario: targetUsername },
-      relations: { roles: true },
-      select: ['nombre_usuario'], // consulta mínima
-    });
-    if (!user) throw new BadRequestException('Usuario destino no existe');
+    // ✅ Verificación explícita antes de generar el QR
+    await this.getValidatedUserSlim(targetUsername);
 
     const sid = randomBytes(16).toString('hex');
     const nonce = randomBytes(16).toString('hex');
-    // 1hour
     const ttlMs = 60 * 60 * 1000; // 1h
     const expAt = now() + ttlMs;
 
@@ -182,18 +220,14 @@ export class AuthQrService {
     if (expected !== sig || sess.nonce !== nonce)
       throw new UnauthorizedException('Firma inválida');
 
-    // Cargar user y su rol
-    const user = await this.usersRepo.findOne({
-      where: { nombre_usuario: sess.targetUsername },
-      relations: { roles: true },
-    });
-    if (!user) throw new UnauthorizedException('Usuario no encontrado');
+    // ✅ Re-validar user (existencia/activo/roles) justo antes de emitir el JWT
+    const userSlim = await this.getValidatedUserSlim(sess.targetUsername);
 
-    // Tu payload (sin sub): username + rol
+    // Payload del JWT
     const tokenPayload = {
-      username: user.nombre_usuario,
-      rolesId: user.roles.map((r) => r.id),
-      rolesName: user.roles.map((r) => r.nombre),
+      username: userSlim.nombre_usuario,
+      rolesId: userSlim.roles.map((r) => r.id),
+      rolesName: userSlim.roles.map((r) => r.nombre),
     };
 
     const accessToken = await this.jwt.signAsync(tokenPayload, {
@@ -209,9 +243,9 @@ export class AuthQrService {
     return {
       access_token: accessToken,
       user: {
-        nombre: user.nombre,
-        nombre_usuario: user.nombre_usuario,
-        roles: user.roles.map((r) => ({ id: r.id, nombre: r.nombre })),
+        nombre: userSlim.nombre,
+        nombre_usuario: userSlim.nombre_usuario,
+        roles: userSlim.roles,
       },
     };
   };
