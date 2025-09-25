@@ -12,6 +12,7 @@ import { User } from './entities/user.entity';
 import { Role } from './entities/role.entity';
 import { AuthQrController } from './qr/auth-qr.controller';
 import { AuthQrService } from './qr/auth-qr.service';
+import { ApiKeyGuard } from './guards/api-key.guard';
 
 @Module({
   imports: [
@@ -33,7 +34,8 @@ import { AuthQrService } from './qr/auth-qr.service';
     JwtAuthGuard,
     RolesGuard,
     AuthQrService,
+    ApiKeyGuard,
   ],
-  exports: [JwtAuthGuard, RolesGuard], // para usar en otros módulos/rutas
+  exports: [JwtAuthGuard, RolesGuard, ApiKeyGuard], // para usar en otros módulos/rutas
 })
 export class AuthModule {}
