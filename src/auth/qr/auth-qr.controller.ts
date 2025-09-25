@@ -12,7 +12,7 @@ import {
 } from '@nestjs/common';
 import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AuthQrService } from './auth-qr.service';
-import { LoginQrDto } from './dto/qr.dto';
+import { LoginQrDto, OnlyUserName } from './dto/qr.dto';
 import { ApiKeyGuard } from '../guards/api-key.guard';
 import { ApiKeyAuth } from '../decorators/api-key.decorator';
 
@@ -29,19 +29,16 @@ export class AuthQrController {
   @ApiOperation({
     summary: 'Crear sesión QR ligada a un usuario (protegido por API Key)',
   })
-  async startForUser(@Body() body: any) {
+  async startForUser(@Body() body: OnlyUserName) {
     const username =
-      (typeof body?.nombre_usuario === 'string' &&
-        body.nombre_usuario.trim()) ||
-      (typeof body?.nombre_de_usuario === 'string' &&
-        body.nombre_de_usuario.trim());
+      typeof body?.nombre_usuario === 'string' && body.nombre_usuario.trim();
 
     if (!username) {
       // 400 inmediato si no viene ninguno
       throw new BadRequestException("El cuerpo debe incluir 'nombre_usuario'.");
     }
 
-    return this.svc.startForUser(username as string);
+    return this.svc.startForUser(username);
   }
 
   // Móvil: login desde QR (público, no requiere API Key)
