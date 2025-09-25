@@ -1,7 +1,18 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+/* eslint-disable @typescript-eslint/no-unsafe-assignment */
+/* eslint-disable @typescript-eslint/no-unsafe-member-access */
+/* eslint-disable @typescript-eslint/no-unsafe-call */
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AuthQrService } from './auth-qr.service';
-import { LoginQrDto, OnlyUserName } from './dto/qr.dto';
+import { LoginQrDto } from './dto/qr.dto';
 import { ApiKeyGuard } from '../guards/api-key.guard';
 import { ApiKeyAuth } from '../decorators/api-key.decorator';
 
@@ -11,14 +22,26 @@ export class AuthQrController {
   constructor(private readonly svc: AuthQrService) {}
 
   // Admin crea el QR para un user específico – ahora protegido por API Key
+  // src/auth/qr/auth-qr.controller.ts
   @Post('start-for-user')
   @ApiKeyAuth()
   @UseGuards(ApiKeyGuard)
   @ApiOperation({
     summary: 'Crear sesión QR ligada a un usuario (protegido por API Key)',
   })
-  async startForUser(@Body() body: OnlyUserName) {
-    return this.svc.startForUser(body.nombre_usuario);
+  async startForUser(@Body() body: any) {
+    const username =
+      (typeof body?.nombre_usuario === 'string' &&
+        body.nombre_usuario.trim()) ||
+      (typeof body?.nombre_de_usuario === 'string' &&
+        body.nombre_de_usuario.trim());
+
+    if (!username) {
+      // 400 inmediato si no viene ninguno
+      throw new BadRequestException("El cuerpo debe incluir 'nombre_usuario'.");
+    }
+
+    return this.svc.startForUser(username as string);
   }
 
   // Móvil: login desde QR (público, no requiere API Key)
