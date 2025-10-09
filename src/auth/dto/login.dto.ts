@@ -1,16 +1,13 @@
-/* eslint-disable @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return */
-import { IsString, MinLength } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
+import { IsNotEmpty, IsString, Length } from 'class-validator';
 
 export class LoginDto {
-  @ApiProperty({ minLength: 3 })
   @IsString()
-  @MinLength(3)
+  @IsNotEmpty()
+  @Length(1, 50)
   nombre_usuario!: string;
 
-  @ApiProperty({ minLength: 8 })
   @IsString()
-  @MinLength(8)
+  @IsNotEmpty()
+  @Length(1, 256)
   password!: string;
 }
-/* eslint-enable @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return */

@@ -32,26 +32,38 @@ async function bootstrap() {
   app.set('trust proxy', true); // también puede ser 1 si tenés un solo proxy
 
   // Logger de requests
-  app.use((req, res, next) => {
-    const started = Date.now();
-    const ip =
-      (req.headers['x-forwarded-for'] as string) ||
-      req.socket.remoteAddress ||
-      '';
-    res.on('finish', () => {
-      const ms = Date.now() - started;
-      const method = req.method;
-      const url = (req as any).originalUrl || req.url;
-      const status = res.statusCode;
-      const origin = (req.headers['origin'] as string) || '';
-      const ua = (req.headers['user-agent'] as string) || '';
-      Logger.log(
-        `[${method}] ${url} -> ${status} ${ms}ms | ip:${ip} origin:${origin} ua:${ua}`,
-        'HTTP',
-      );
-    });
-    next();
-  });
+  app.use(
+    (
+      req: {
+        method: string;
+        url: string;
+        originalUrl?: string;
+        headers: Record<string, unknown>;
+        socket: { remoteAddress?: string };
+      },
+      res: { on: (arg0: string, arg1: () => void) => void; statusCode: number },
+      next,
+    ) => {
+      const started = Date.now();
+      const ip: string =
+        (req.headers['x-forwarded-for'] as string) ||
+        (req.socket.remoteAddress as string) ||
+        '';
+      res.on('finish', () => {
+        const ms = Date.now() - started;
+        const method = req.method;
+        const url = req.originalUrl || req.url;
+        const status = res.statusCode;
+        const origin = (req.headers['origin'] as string) || '';
+        const ua = (req.headers['user-agent'] as string) || '';
+        Logger.log(
+          `[${method}] ${url} -> ${status} ${ms}ms | ip:${ip} origin:${origin} ua:${ua}`,
+          'HTTP',
+        );
+      });
+      next();
+    },
+  );
 
   const config = new DocumentBuilder()
     .setTitle('Mi API')
@@ -88,4 +100,8 @@ async function bootstrap() {
   if (lanUrl) logger.log(`   LAN:     ${lanUrl}`);
   logger.log(`   Swagger: ${lanUrl ?? localUrl}/docs`);
 }
-bootstrap();
+(async () => {
+  await bootstrap();
+})().catch((err) => {
+  console.error('Error during bootstrap:', err);
+});

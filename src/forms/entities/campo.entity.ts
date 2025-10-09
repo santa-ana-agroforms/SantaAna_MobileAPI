@@ -7,45 +7,60 @@ export enum TipoCampo {
   text = 'text',
   boolean = 'boolean',
   img = 'img',
-  // agregá los que uses
+  // agrega los que uses
 }
 
 export enum ClaseCampo {
   calculado = 'calculado',
   autorrellenado = 'autorrellenado',
   firma = 'firma',
-  number = 'number',
-  text = 'text',
-  string = 'string',
-  boolean = 'boolean',
-  // agregá los que uses
+  // agrega los que uses
 }
 
-@Entity('dbo.formularios_campo')
+const jsonTextTransformer = {
+  to: (value: Record<string, unknown> | null): string | null => {
+    if (value === null || value === undefined) return null;
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return null;
+    }
+  },
+  from: (value: string | null): Record<string, unknown> | null => {
+    if (value === null || value === undefined || value === '') return null;
+    try {
+      return JSON.parse(value) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+  },
+};
+
+@Entity({ name: 'formularios_campo' })
 export class Campo {
-  @PrimaryColumn({ type: 'varchar', length: 36, name: 'id_campo' })
+  @PrimaryColumn({ type: 'varchar', length: 32, name: 'id_campo' })
   idCampo!: string;
 
-  @Column({ type: 'nvarchar', length: 50 })
+  @Column({ type: 'varchar', length: 20 })
   tipo!: TipoCampo;
 
-  @Column({ type: 'nvarchar', length: 50 })
+  @Column({ type: 'varchar', length: 30 })
   clase!: ClaseCampo;
 
-  @Column({ type: 'nvarchar', length: 100, name: 'nombre_campo' })
+  @Column({ type: 'varchar', length: 64, name: 'nombre_campo' })
   nombreCampo!: string;
 
-  @Column({ type: 'nvarchar', length: 255, nullable: true })
-  etiqueta!: string | null;
+  @Column({ type: 'varchar', length: 100 })
+  etiqueta!: string;
 
-  @Column({ type: 'nvarchar', length: 500, nullable: true })
+  @Column({ type: 'varchar', length: 255, nullable: true })
   ayuda!: string | null;
 
-  // simple-json guarda como NVARCHAR y TypeORM serializa a object
-  @Column({ type: 'simple-json', nullable: true })
+  // En Postgres, config es TEXT; se serializa/deserializa a JSON en la capa de entidad
+  @Column({ type: 'text', nullable: true, transformer: jsonTextTransformer })
   config!: Record<string, unknown> | null;
 
-  @Column({ type: 'bit', default: false })
+  @Column({ type: 'boolean', default: false })
   requerido!: boolean;
 
   @OneToMany(() => PaginaCampo, (pc) => pc.campo)
