@@ -1,23 +1,11 @@
-import { Entity, ManyToOne, PrimaryColumn, JoinColumn } from 'typeorm';
-import { Pagina } from './pagina.entity';
-import { PaginaVersion } from './pagina-version.entity';
+// AVISO: En el esquema de PostgreSQL proporcionado ya no existe una tabla de enlace
+// "formularios_pagina_pagina_version". Esta entidad se conserva solo como marcador
+// para facilitar la migración y debe eliminarse junto con sus referencias en módulos y servicios.
+// El vínculo entre páginas y versiones ahora se representa con:
+//  - La tabla "formularios_pagina" (uuid) asociada a "formularios_formularioindexversion" (uuid),
+//    y
+//  - La tabla "formularios_pagina_version" (id_pagina_version varchar(32)) que se usa para
+//    relacionar campos por versión (formularios_pagina_campo).
+// El archivo puede borrarse con seguridad una vez actualizados los imports.
 
-@Entity('dbo.formularios_pagina_pagina_version')
-export class PaginaVersionLink {
-  @PrimaryColumn({ type: 'varchar', length: 36, name: 'id_pagina' })
-  paginaId!: string;
-
-  @PrimaryColumn({ type: 'varchar', length: 36, name: 'id_pagina_version' })
-  paginaVersionId!: string;
-
-  @ManyToOne(() => Pagina, (p) => p.versionesLink, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'id_pagina', referencedColumnName: 'idPagina' })
-  pagina!: Pagina;
-
-  @ManyToOne(() => PaginaVersion, (v) => v.paginasLink, { onDelete: 'CASCADE' })
-  @JoinColumn({
-    name: 'id_pagina_version',
-    referencedColumnName: 'idPaginaVersion',
-  })
-  version!: PaginaVersion;
-}
+export {};

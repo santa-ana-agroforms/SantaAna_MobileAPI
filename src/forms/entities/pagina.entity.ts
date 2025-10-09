@@ -1,26 +1,50 @@
-import { Column, Entity, OneToMany, PrimaryColumn } from 'typeorm';
-import { PaginaVersionLink } from './pagina-version-link.entity';
+import {
+  Check,
+  Column,
+  Entity,
+  ManyToOne,
+  OneToMany,
+  PrimaryColumn,
+  JoinColumn,
+} from 'typeorm';
+import { Formulario } from './formulario.entity';
+import { FormularioVersion } from './formulario-version.entity';
 import { PaginaIndexVersion } from './pagina-index-version.entity';
 
-@Entity('dbo.formularios_pagina')
+@Entity({ name: 'formularios_pagina' })
+@Check('secuencia >= 0')
 export class Pagina {
-  @PrimaryColumn({ type: 'varchar', length: 36, name: 'id_pagina' })
+  @PrimaryColumn({ type: 'uuid', name: 'id_pagina' })
   idPagina!: string;
 
-  @Column({ type: 'int', nullable: true })
-  secuencia!: number | null;
+  @Column({ type: 'int' })
+  secuencia!: number;
 
-  @Column({ type: 'nvarchar', length: 255 })
+  @Column({ type: 'varchar', length: 120 })
   nombre!: string;
 
-  @Column({ type: 'nvarchar', length: 1000, nullable: true })
-  descripcion!: string | null;
+  @Column({ type: 'text' })
+  descripcion!: string;
 
-  // Puente página ↔ versión de página
-  @OneToMany(() => PaginaVersionLink, (pv) => pv.pagina)
-  versionesLink!: PaginaVersionLink[];
+  @Column({ type: 'uuid', name: 'formulario_id' })
+  formularioId!: string;
 
-  // Puente versión de formulario ↔ página
+  @Column({ type: 'uuid', name: 'index_version_id' })
+  indexVersionId!: string;
+
+  @ManyToOne(() => Formulario, (f) => f.paginas, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'formulario_id', referencedColumnName: 'id' })
+  formulario!: Formulario;
+
+  @ManyToOne(() => FormularioVersion, (v) => v.paginasLink, {
+    onDelete: 'CASCADE',
+  })
+  @JoinColumn({
+    name: 'index_version_id',
+    referencedColumnName: 'idIndexVersion',
+  })
+  indexVersion!: FormularioVersion;
+
   @OneToMany(() => PaginaIndexVersion, (piv) => piv.pagina)
   indexVersionLink!: PaginaIndexVersion[];
 }

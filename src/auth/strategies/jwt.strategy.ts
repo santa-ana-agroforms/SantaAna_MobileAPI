@@ -1,37 +1,30 @@
-// src/auth/strategies/jwt.strategy.ts
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { User } from '../entities/user.entity';
-import type { JwtPayload, AuthUser } from '../types/auth.types';
+import { ConfigService } from '@nestjs/config';
+import { AuthService } from '../auth.service';
+import type { JwtPayload } from '../types/auth.types';
 
 @Injectable()
-export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
+export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(
-    @InjectRepository(User) private readonly usersRepo: Repository<User>,
+    private readonly config: ConfigService,
+    private readonly auth: AuthService,
   ) {
+    const jwtSecret = config.get<string>('JWT_SECRET');
+    if (!jwtSecret) {
+      throw new Error('JWT_SECRET is not defined in configuration');
+    }
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey: process.env.JWT_SECRET || 'dev-secret',
-      algorithms: ['HS384'],
+      secretOrKey: jwtSecret,
+      algorithms: ['HS384'], // 👈 Debe coincidir con el token que emites
     });
   }
 
-  async validate(payload: JwtPayload): Promise<AuthUser> {
-    // Usamos el sub (id) del token para buscar el user actual y su rol
-    const user = await this.usersRepo.findOne({
-      where: { nombre_usuario: payload.username },
-      relations: { roles: true },
-    });
-    if (!user) throw new UnauthorizedException('Usuario no encontrado');
-
-    return {
-      nombre: user.nombre,
-      nombre_usuario: user.nombre_usuario,
-      roles: user.roles.map((r) => ({ id: r.id, nombre: r.nombre })),
-    };
+  async validate(payload: JwtPayload) {
+    // devolvé el usuario completo para @AuthUser()
+    return this.auth.me(payload.sub);
   }
 }

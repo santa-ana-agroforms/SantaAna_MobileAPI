@@ -1,44 +1,42 @@
-/* eslint-disable @typescript-eslint/require-await */
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
-/* eslint-disable @typescript-eslint/no-unsafe-call */
-/* eslint-disable @typescript-eslint/no-unsafe-member-access */
-// src/auth/qr/auth-qr.service.ts
 import {
   Injectable,
   BadRequestException,
   UnauthorizedException,
-  Logger,
   ForbiddenException,
+  Logger,
 } from '@nestjs/common';
-import { randomBytes, createHmac } from 'crypto';
-import { JwtService } from '@nestjs/jwt';
-import QRCode from 'qrcode';
+import { createHmac, randomBytes } from 'crypto';
+// ⬇️ Import correcto para tener tipos (evita "any")
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { User } from '../entities/user.entity';
-
+import { Repository, DataSource } from 'typeorm';
+import type { QRCodeToBufferOptions } from 'qrcode';
 import sharp from 'sharp';
-import { promises as fs } from 'fs';
 import path from 'path';
+import { promises as fs } from 'fs';
+
+import { Usuario } from '../entities/formularios-usuario.entity';
+import { UsuarioGroup } from '../entities/formularios-usuario-groups.entity';
+import { AuthService } from '../auth.service';
+import type { LoginResult } from '../types/auth.types';
 
 type QrStatus = 'pending' | 'claimed' | 'expired';
+
+type QrRenderOpts = {
+  width?: number; // tamaño del PNG final (px)
+  dark?: string; // color de módulos
+  light?: string; // color de fondo (usa '#0000' para transparente)
+  logoPath?: string; // ruta del logo (opcional)
+  logoSizeRatio?: number; // proporción del ancho del QR (0.20–0.25 recomendado)
+  logoBorder?: number; // padding blanco alrededor del logo (px)
+};
 
 type QrSession = {
   sid: string;
   nonce: string;
   expAt: number; // epoch ms
   status: QrStatus;
-  targetUsername: string; // ← usuario al que pertenece este QR
-  accessToken?: string; // se setea al reclamar (login)
-};
-
-type QrRenderOpts = {
-  width?: number; // tamaño PNG del QR
-  dark?: string; // color de módulos
-  light?: string; // color de fondo (usar '#0000' para transparente)
-  logoPath?: string | undefined; // ruta del logo (opcional)
-  logoSizeRatio?: number; // 0.20–0.25 recomendado
-  logoBorder?: number; // padding blanco alrededor del logo (px)
+  targetUsername: string; // usuario ligado a este QR
+  result?: LoginResult; // setea al reclamar (login)
 };
 
 const memStore = new Map<string, QrSession>(); // ⛔ En prod: usar Redis con TTL
@@ -51,55 +49,54 @@ export class AuthQrService {
   private readonly logger = new Logger(AuthQrService.name);
 
   constructor(
-    private readonly jwt: JwtService,
-    @InjectRepository(User) private readonly usersRepo: Repository<User>,
+    @InjectRepository(Usuario)
+    private readonly usersRepo: Repository<Usuario>,
+    @InjectRepository(UsuarioGroup)
+    private readonly userGroupsRepo: Repository<UsuarioGroup>,
+    private readonly authService: AuthService,
+    private readonly dataSource: DataSource,
   ) {}
 
-  // ========= Helper central: validar usuario “slim” =========
-  /**
-   * Valida que el usuario exista, esté activo y (opcional) tenga roles.
-   * Devuelve un objeto “slim” sin la contraseña.
-   */
-  private async getValidatedUserSlim(nombreUsuario: string): Promise<{
-    nombre_usuario: string;
-    nombre: string;
-    activo: boolean;
-    roles: { id: number; nombre: string }[];
-  }> {
-    // OJO con TypeORM: si usás select parcial + relations, usá la sintaxis de selección anidada
-    const user = await this.usersRepo.findOne({
-      where: { nombre_usuario: nombreUsuario },
-      relations: { roles: true },
-      select: {
-        nombre_usuario: true,
-        nombre: true,
-        activo: true,
-        // contrasena: false, // por si querés ser explícito
-        roles: { id: true, nombre: true },
-      },
+  // ========= Helpers =========
+  private async ensureUserExists(nombreUsuario: string): Promise<void> {
+    const u = await this.usersRepo.findOne({
+      where: { nombreUsuario },
+      select: { nombreUsuario: true, activo: true, accesoWeb: true },
     });
 
-    if (!user) {
+    if (!u) {
       throw new BadRequestException('El usuario destino no existe');
     }
-    if (user.activo === false) {
-      throw new ForbiddenException('El usuario está inactivo');
+    if (!u.activo) {
+      throw new ForbiddenException('El usuario está inactivo o sin acceso web');
     }
-    // Si tu seguridad exige rol asignado, valida:
-    if (!user.roles || user.roles.length === 0) {
-      throw new ForbiddenException('El usuario no tiene roles asignados');
-    }
-
-    return {
-      nombre_usuario: user.nombre_usuario,
-      nombre: user.nombre,
-      activo: user.activo,
-      roles: user.roles.map((r) => ({ id: Number(r.id), nombre: r.nombre })),
-    };
   }
 
-  // ========= Helper de render con logo centrado (PNG DataURL) =========
-  private makeQrDataUrl = async (payload: string, opts: QrRenderOpts = {}) => {
+  private async loadRoles(
+    nombreUsuario: string,
+  ): Promise<Array<{ id: number; nombre: string }>> {
+    const rows = await this.dataSource.query<
+      Array<{ id: number; name: string }>
+    >(
+      `
+      SELECT g.id, g.name
+      FROM auth_group g
+      JOIN formularios_usuario_groups ug
+        ON ug.group_id = g.id
+      WHERE ug.usuario_id = $1
+      ORDER BY g.name
+      `,
+      [nombreUsuario],
+    );
+
+    return rows.map((r) => ({ id: Number(r.id), nombre: r.name }));
+  }
+
+  // ⬇️ Es ASÍNCRONA y devuelve Promise<string>; usar await en el caller
+  private makeQrDataUrl = async (
+    payload: string,
+    opts: QrRenderOpts = {},
+  ): Promise<string> => {
     const {
       width = Number(process.env.QR_WIDTH || 560),
       dark = process.env.QR_DARK || '#0F172AFF',
@@ -109,8 +106,16 @@ export class AuthQrService {
       logoBorder = Number(process.env.QR_LOGO_BORDER || 14),
     } = opts;
 
+    // Import dinámico tipado para evitar problemas de ESLint/TS con CJS
+    const { toBuffer } = (await import('qrcode')) as {
+      toBuffer: (
+        text: string,
+        options?: QRCodeToBufferOptions,
+      ) => Promise<Buffer>;
+    };
+
     // 1) QR base (alta corrección de error)
-    const qrPng = await QRCode.toBuffer(payload, {
+    const qrPng = await toBuffer(payload, {
       errorCorrectionLevel: 'H',
       width,
       margin: 2,
@@ -141,9 +146,9 @@ export class AuthQrService {
       const radius = Math.round(badgeSize * 0.2);
       const badgeSvg = Buffer.from(
         `<svg width="${badgeSize}" height="${badgeSize}">
-           <rect x="0" y="0" width="${badgeSize}" height="${badgeSize}"
-                 rx="${radius}" ry="${radius}" fill="#FFFFFF"/>
-         </svg>`,
+         <rect x="0" y="0" width="${badgeSize}" height="${badgeSize}"
+               rx="${radius}" ry="${radius}" fill="#FFFFFF"/>
+       </svg>`,
       );
 
       const badge = await sharp({
@@ -171,44 +176,54 @@ export class AuthQrService {
 
       return `data:image/png;base64,${finalPng.toString('base64')}`;
     } catch (e) {
-      this.logger.warn(
+      this.logger?.warn?.(
         `QR con logo: usando fallback sin logo. Motivo: ${String(e)}`,
       );
       return `data:image/png;base64,${qrPng.toString('base64')}`;
     }
   };
 
-  // Admin: genera QR ligado a un username
+  // ========= Flujos (firmas y outputs idénticos a tu original) =========
+
+  // Admin: genera QR ligado a un username (verifica existencia ANTES)
   startForUser = async (
     targetUsername: string,
   ): Promise<{ sid: string; qr: string; expiresIn: number }> => {
-    // ✅ Verificación explícita antes de generar el QR
-    await this.getValidatedUserSlim(targetUsername);
+    await this.ensureUserExists(targetUsername); // ✅ verificación previa
 
     const sid = randomBytes(16).toString('hex');
     const nonce = randomBytes(16).toString('hex');
-    const ttlMs = 60 * 60 * 1000; // 1h
+
+    const ttlMs = Number(process.env.AUTH_QR_TTL_MS ?? 60 * 60 * 1000); // default 1h
     const expAt = now() + ttlMs;
 
     const secret = process.env.QR_SECRET || 'qr-dev-secret';
     const sig = makeSig(sid, nonce, secret);
 
-    // Payload que va dentro del QR (no revela el username)
+    // Payload JSON (sin usuario, como antes)
     const payload = JSON.stringify({ sid, nonce, sig, v: 1 });
 
-    // === QR bonito con logo (si QR_LOGO_PATH está seteado) ===
+    // ⬇️ ¡AQUÍ SÍ hay que esperar! (antes lo casteabas mal)
     const qr = await this.makeQrDataUrl(payload);
 
-    memStore.set(sid, { sid, nonce, expAt, status: 'pending', targetUsername });
+    memStore.set(sid, {
+      sid,
+      nonce,
+      expAt,
+      status: 'pending',
+      targetUsername,
+    });
+
     return { sid, qr, expiresIn: Math.floor(ttlMs / 1000) };
   };
 
-  // Móvil (no autenticado): reclama el QR y recibe el JWT
+  // Móvil: reclama el QR y recibe el JWT (misma firma: sid, nonce, sig)
   login = async (sid: string, nonce: string, sig: string) => {
     const sess = memStore.get(sid);
     if (!sess) throw new BadRequestException('Sesión inválida');
-    if (sess.status !== 'pending')
+    if (sess.status !== 'pending') {
       throw new BadRequestException('Sesión ya utilizada o no disponible');
+    }
     if (sess.expAt < now()) {
       sess.status = 'expired';
       memStore.set(sid, sess);
@@ -217,41 +232,34 @@ export class AuthQrService {
 
     const secret = process.env.QR_SECRET || 'qr-dev-secret';
     const expected = makeSig(sid, nonce, secret);
-    if (expected !== sig || sess.nonce !== nonce)
+    if (expected !== sig || sess.nonce !== nonce) {
       throw new UnauthorizedException('Firma inválida');
+    }
 
-    // ✅ Re-validar user (existencia/activo/roles) justo antes de emitir el JWT
-    const userSlim = await this.getValidatedUserSlim(sess.targetUsername);
+    // Emitir el MISMO token que el login normal (usa AuthService con Argon2)
+    const user = await this.authService.me(sess.targetUsername);
+    const result = await this.authService.login(user);
 
-    // Payload del JWT
-    const tokenPayload = {
-      username: userSlim.nombre_usuario,
-      rolesId: userSlim.roles.map((r) => r.id),
-      rolesName: userSlim.roles.map((r) => r.nombre),
-    };
-
-    const accessToken = await this.jwt.signAsync(tokenPayload, {
-      secret: process.env.JWT_SECRET || 'dev-secret',
-      algorithm: 'HS384',
-      expiresIn: process.env.JWT_EXPIRES_IN || '1h',
-    });
-
-    sess.status = 'claimed';
-    sess.accessToken = accessToken;
-    memStore.set(sid, sess);
-
-    return {
-      access_token: accessToken,
+    // Output LEGACY (como tu original)
+    const roles = await this.loadRoles(sess.targetUsername);
+    const legacy = {
+      access_token: result.access_token,
       user: {
-        nombre: userSlim.nombre,
-        nombre_usuario: userSlim.nombre_usuario,
-        roles: userSlim.roles,
+        nombre: result.user.nombre,
+        nombre_usuario: result.user.nombre_usuario,
+        roles,
       },
     };
+
+    sess.status = 'claimed';
+    sess.result = result;
+    memStore.set(sid, sess);
+
+    return legacy;
   };
 
-  // (Opcional) Admin: ver estado
-  status = async (sid: string): Promise<{ status: QrStatus }> => {
+  // Admin: ver estado (output idéntico: { status })
+  status = (sid: string): { status: QrStatus } => {
     const sess = memStore.get(sid);
     if (!sess) return { status: 'expired' };
     if (sess.expAt < now() && sess.status === 'pending') {

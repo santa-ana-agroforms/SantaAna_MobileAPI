@@ -1,41 +1,36 @@
-import { Column, Entity, PrimaryColumn } from 'typeorm';
+import {
+  Column,
+  Entity,
+  JoinColumn,
+  OneToMany,
+  OneToOne,
+  PrimaryColumn,
+} from 'typeorm';
+import { Campo } from 'src/forms/entities';
+import { CampoGrupo } from './formularios-campo-grupo.entity';
 
-@Entity({ name: 'formularios_grupo', schema: 'dbo' })
-export class FormulariosGrupo {
-  @PrimaryColumn({ name: 'id_grupo', type: 'char', length: 32 })
-  id_grupo!: string;
+@Entity({ name: 'formularios_grupo' })
+export class Grupo {
+  @PrimaryColumn({ type: 'varchar', length: 64, name: 'id_grupo' })
+  idGrupo!: string;
 
-  @Column({ name: 'nombre', type: 'nvarchar', length: 100 })
+  @Column({ type: 'varchar', length: 150 })
   nombre!: string;
 
-  // Ledger (GENERATED ALWAYS): solo lectura
+  // ÚNICO + FK a formularios_campo(id_campo)
   @Column({
-    name: 'ledger_start_transaction_id',
-    type: 'bigint',
-    select: false,
+    type: 'varchar',
+    length: 32,
+    name: 'id_campo_group',
+    unique: true,
   })
-  ledger_start_transaction_id!: string;
+  idCampoGroup!: string;
 
-  @Column({
-    name: 'ledger_end_transaction_id',
-    type: 'bigint',
-    nullable: true,
-    select: false,
-  })
-  ledger_end_transaction_id!: string | null;
+  @OneToOne(() => Campo, { onDelete: 'RESTRICT' })
+  @JoinColumn({ name: 'id_campo_group', referencedColumnName: 'idCampo' })
+  campoGroup!: Campo;
 
-  @Column({
-    name: 'ledger_start_sequence_number',
-    type: 'bigint',
-    select: false,
-  })
-  ledger_start_sequence_number!: string;
-
-  @Column({
-    name: 'ledger_end_sequence_number',
-    type: 'bigint',
-    nullable: true,
-    select: false,
-  })
-  ledger_end_sequence_number!: string | null;
+  // Relación a la tabla de unión (campos que pertenecen a este grupo)
+  @OneToMany(() => CampoGrupo, (cg) => cg.grupo)
+  campos!: CampoGrupo[];
 }

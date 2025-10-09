@@ -1,4 +1,3 @@
-// src/auth/auth.controller.ts
 import { Body, Controller, HttpCode, HttpStatus, Post } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
@@ -10,6 +9,7 @@ export class AuthController {
   @Post('login')
   @HttpCode(HttpStatus.OK)
   async login(@Body() dto: LoginDto) {
+    // Ahora AuthService.login soporta (username, password)
     return this.auth.login(dto.nombre_usuario, dto.password);
   }
 }

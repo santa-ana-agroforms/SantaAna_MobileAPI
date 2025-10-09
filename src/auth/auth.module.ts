@@ -8,24 +8,26 @@ import { AuthController } from './auth.controller';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { RolesGuard } from './guards/roles.guard';
-import { User } from './entities/user.entity';
-import { Role } from './entities/role.entity';
 import { AuthQrController } from './qr/auth-qr.controller';
 import { AuthQrService } from './qr/auth-qr.service';
 import { ApiKeyGuard } from './guards/api-key.guard';
+import * as UserEntities from './entities';
+import { ConfigService } from '@nestjs/config';
 
 @Module({
   imports: [
     PassportModule.register({ defaultStrategy: 'jwt', session: false }),
-    JwtModule.register({
-      // valores por defecto; usa .env en runtime
-      secret: process.env.JWT_SECRET || 'dev-secret',
-      signOptions: {
-        algorithm: 'HS384',
-        expiresIn: process.env.JWT_EXPIRES_IN || '1h',
-      },
+    JwtModule.registerAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        secret: config.get<string>('JWT_SECRET'),
+        signOptions: {
+          algorithm: 'HS384', // 👈 Para que TODO lo que firmes de ahora en adelante sea HS384
+          expiresIn: Number(process.env.JWT_EXPIRES_IN_SECONDS ?? '86400'),
+        },
+      }),
     }),
-    TypeOrmModule.forFeature([User, Role]),
+    TypeOrmModule.forFeature([...Object.values(UserEntities)]),
   ],
   controllers: [AuthController, AuthQrController],
   providers: [
