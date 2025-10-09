@@ -1,6 +1,3 @@
-/* eslint-disable @typescript-eslint/no-redundant-type-constituents */
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
-/* eslint-disable @typescript-eslint/no-unsafe-return */
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
@@ -14,35 +11,37 @@ export type GroupFlatRow = {
   formulario_id: string;
   pagina_id: string;
   pagina_nombre: string;
-  pagina_secuencia: number | null;
+  pagina_secuencia: number;
 
   // campo
   campo_id: string;
-  campo_sequence: number;
+  campo_sequence: number | null;
   campo_tipo: string;
   campo_clase: string;
   campo_nombre_interno: string;
-  campo_etiqueta: string | null;
+  campo_etiqueta: string;
   campo_ayuda: string | null;
-  campo_config: unknown | null;
-  campo_requerido: number | boolean | Buffer | string;
+  campo_config: unknown;
+  campo_requerido: boolean;
 };
 
-const parseJsonSafe = (val: unknown) => {
+const parseJsonSafe = <T = unknown>(val: unknown): unknown => {
   if (val == null) return null;
-  if (typeof val !== 'string') return val as any;
+  if (typeof val !== 'string') return val as T;
   try {
-    return JSON.parse(val);
+    return JSON.parse(val) as T;
   } catch {
     return val;
   }
 };
 
-const toBool = (v: unknown) => {
+const toBool = (v: unknown): boolean => {
   if (typeof v === 'boolean') return v;
   if (typeof v === 'number') return v === 1;
-  if (typeof v === 'string') return v === '1' || v.toLowerCase() === 'true';
-  if (Buffer.isBuffer(v)) return v.length > 0 && v[0] === 1;
+  if (typeof v === 'string') {
+    const s = v.trim().toLowerCase();
+    return s === '1' || s === 'true' || s === 't';
+  }
   return false;
 };
 
@@ -50,30 +49,33 @@ const toBool = (v: unknown) => {
 export class GroupsService {
   constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
 
-  // CTE para "última versión de cada página" (los grupos NO versionan, pero
-  // necesitamos la versión vigente de la página para saber el set/orden de campos)
+  // CTE: última versión por página (enlazando uuid de página con varchar(32) de pagina_version)
   private readonly baseCteSql = `
-WITH ult_version_pagina AS (
+WITH paginas_uuid_map AS (
   SELECT
-    fp.id_pagina,
+    fp.id_pagina                         AS pagina_id_uuid,
+    REPLACE(fp.id_pagina::text, '-', '') AS pagina_id_32
+  FROM formularios_pagina fp
+),
+ult_version_pagina AS (
+  SELECT
+    p.pagina_id_uuid,
     MAX(fpv.fecha_creacion) AS fecha_max
-  FROM dbo.formularios_pagina fp
-  JOIN dbo.formularios_pagina_version fpv
-    ON fpv.id_pagina = fp.id_pagina
-  GROUP BY fp.id_pagina
+  FROM formularios_pagina_version fpv
+  JOIN paginas_uuid_map p
+    ON p.pagina_id_32 = fpv.id_pagina
+  GROUP BY p.pagina_id_uuid
 )
 `;
 
-  // Filtro de visibilidad (formularios públicos o asignados por rol del usuario)
+  // Filtro de visibilidad (públicos o asignados al usuario)
   private readonly visibleForUser = `
-  (f.es_publico = 1)
+  (f.es_publico = true)
   OR EXISTS (
       SELECT 1
-      FROM dbo.formularios_rol_formulario rf
-      JOIN dbo.formularios_rol_user ru
-        ON ru.id_rol = rf.rol_id
-     WHERE ru.nombre_usuario = @0
-       AND rf.id_formulario = f.id
+      FROM formularios_user_formulario uf
+     WHERE uf.id_usuario_id = $1
+       AND uf.id_formulario_id = f.id
   )
 `;
 
@@ -88,39 +90,41 @@ SELECT
   f.id                                     AS formulario_id,
   fp.id_pagina                             AS pagina_id,
   fp.nombre                                AS pagina_nombre,
-  fp.secuencia                              AS pagina_secuencia,
+  fp.secuencia                             AS pagina_secuencia,
 
   fc.id_campo                               AS campo_id,
   fpc.sequence                             AS campo_sequence,
   fc.tipo                                  AS campo_tipo,
   fc.clase                                 AS campo_clase,
-  fc.nombre_campo                           AS campo_nombre_interno,
-  fc.etiqueta                               AS campo_etiqueta,
-  fc.ayuda                                  AS campo_ayuda,
-  fc.config                                 AS campo_config,
-  CASE WHEN TRY_CONVERT(int, fc.requerido) = 1 THEN 1 ELSE 0 END AS campo_requerido
-FROM dbo.formularios_grupo g
-JOIN dbo.formularios_campo_grupo fcg
+  fc.nombre_campo                          AS campo_nombre_interno,
+  fc.etiqueta                              AS campo_etiqueta,
+  fc.ayuda                                 AS campo_ayuda,
+  fc.config                                AS campo_config,
+  COALESCE(fc.requerido, false)            AS campo_requerido
+FROM formularios_grupo g
+JOIN formularios_campo_grupo fcg
   ON fcg.id_grupo = g.id_grupo
-JOIN dbo.formularios_campo fc
+JOIN formularios_campo fc
   ON fc.id_campo = fcg.id_campo
--- necesitamos el contexto de página (y orden de campo) vía la última versión de la página:
-JOIN dbo.formularios_pagina_campo fpc
+-- contexto de página (y orden de campo) a partir de la última versión de la página:
+JOIN formularios_pagina_campo fpc
   ON fpc.id_campo = fc.id_campo
-JOIN dbo.formularios_pagina_version fpv
+JOIN formularios_pagina_version fpv
   ON fpv.id_pagina_version = fpc.id_pagina_version
+JOIN formularios_pagina fp
+  ON REPLACE(fp.id_pagina::text, '-', '') = fpv.id_pagina
 JOIN ult_version_pagina uvp
-  ON uvp.id_pagina = fpv.id_pagina
+  ON uvp.pagina_id_uuid = fp.id_pagina
  AND uvp.fecha_max = fpv.fecha_creacion
-JOIN dbo.formularios_pagina fp
-  ON fp.id_pagina = fpv.id_pagina
-JOIN dbo.formularios_formulario f
+JOIN formularios_formulario f
   ON f.id = fp.formulario_id
 WHERE ${this.visibleForUser}
-ORDER BY g.nombre, fp.secuencia, fpc.sequence, fc.id_campo;
+ORDER BY g.nombre, fp.secuencia, fpc.sequence NULLS LAST, fc.id_campo;
 `;
-    const rows = await this.dataSource.query(sql, [user.nombre_usuario]);
-    return rows as GroupFlatRow[];
+    const rows: GroupFlatRow[] = await this.dataSource.query(sql, [
+      user.nombre_usuario,
+    ]);
+    return rows;
   }
 
   // Plano de un grupo por id (filtrado por usuario)
@@ -137,42 +141,42 @@ SELECT
   f.id                                     AS formulario_id,
   fp.id_pagina                             AS pagina_id,
   fp.nombre                                AS pagina_nombre,
-  fp.secuencia                              AS pagina_secuencia,
+  fp.secuencia                             AS pagina_secuencia,
 
   fc.id_campo                               AS campo_id,
   fpc.sequence                             AS campo_sequence,
   fc.tipo                                  AS campo_tipo,
   fc.clase                                 AS campo_clase,
-  fc.nombre_campo                           AS campo_nombre_interno,
-  fc.etiqueta                               AS campo_etiqueta,
-  fc.ayuda                                  AS campo_ayuda,
-  fc.config                                 AS campo_config,
-  CASE WHEN TRY_CONVERT(int, fc.requerido) = 1 THEN 1 ELSE 0 END AS campo_requerido
-FROM dbo.formularios_grupo g
-JOIN dbo.formularios_campo_grupo fcg
+  fc.nombre_campo                          AS campo_nombre_interno,
+  fc.etiqueta                              AS campo_etiqueta,
+  fc.ayuda                                 AS campo_ayuda,
+  fc.config                                AS campo_config,
+  COALESCE(fc.requerido, false)            AS campo_requerido
+FROM formularios_grupo g
+JOIN formularios_campo_grupo fcg
   ON fcg.id_grupo = g.id_grupo
-JOIN dbo.formularios_campo fc
+JOIN formularios_campo fc
   ON fc.id_campo = fcg.id_campo
-JOIN dbo.formularios_pagina_campo fpc
+JOIN formularios_pagina_campo fpc
   ON fpc.id_campo = fc.id_campo
-JOIN dbo.formularios_pagina_version fpv
+JOIN formularios_pagina_version fpv
   ON fpv.id_pagina_version = fpc.id_pagina_version
+JOIN formularios_pagina fp
+  ON REPLACE(fp.id_pagina::text, '-', '') = fpv.id_pagina
 JOIN ult_version_pagina uvp
-  ON uvp.id_pagina = fpv.id_pagina
+  ON uvp.pagina_id_uuid = fp.id_pagina
  AND uvp.fecha_max = fpv.fecha_creacion
-JOIN dbo.formularios_pagina fp
-  ON fp.id_pagina = fpv.id_pagina
-JOIN dbo.formularios_formulario f
+JOIN formularios_formulario f
   ON f.id = fp.formulario_id
-WHERE g.id_grupo = @0
+WHERE g.id_grupo = $1
   AND (${this.visibleForUser})
-ORDER BY g.nombre, fp.secuencia, fpc.sequence, fc.id_campo;
+ORDER BY g.nombre, fp.secuencia, fpc.sequence NULLS LAST, fc.id_campo;
 `;
-    const rows = await this.dataSource.query(sql, [
+    const rows: GroupFlatRow[] = await this.dataSource.query(sql, [
       id_grupo,
       user.nombre_usuario,
     ]);
-    return rows as GroupFlatRow[];
+    return rows;
   }
 
   // ---- Árbol: todos los grupos visibles para el usuario
@@ -191,29 +195,26 @@ ORDER BY g.nombre, fp.secuencia, fpc.sequence, fc.id_campo;
 
   // ---- Helper de armado (por grupo)
   private groupFlatToTree(rows: GroupFlatRow[]) {
-    const gmap = new Map<
-      string,
-      {
-        id_grupo: string;
-        nombre: string;
-        campos: Array<{
-          id_campo: string;
-          sequence: number;
-          tipo: string;
-          clase: string;
-          nombre_interno: string;
-          etiqueta: string | null;
-          ayuda: string | null;
-          config: unknown | null;
-          requerido: boolean;
-          pagina: {
-            id_pagina: string;
-            nombre: string;
-            secuencia: number | null;
-          };
-        }>;
-      }
-    >();
+    type CampoNode = {
+      id_campo: string;
+      sequence: number | null;
+      tipo: string;
+      clase: string;
+      nombre_interno: string;
+      etiqueta: string;
+      ayuda: string | null;
+      config: unknown;
+      requerido: boolean;
+      pagina: { id_pagina: string; nombre: string; secuencia: number };
+    };
+
+    type GrupoNode = {
+      id_grupo: string;
+      nombre: string;
+      campos: CampoNode[];
+    };
+
+    const gmap = new Map<string, GrupoNode>();
 
     for (const r of rows) {
       if (!gmap.has(r.id_grupo)) {
@@ -230,14 +231,14 @@ ORDER BY g.nombre, fp.secuencia, fpc.sequence, fc.id_campo;
         tipo: r.campo_tipo,
         clase: r.campo_clase,
         nombre_interno: r.campo_nombre_interno,
-        etiqueta: r.campo_etiqueta ?? null,
+        etiqueta: r.campo_etiqueta,
         ayuda: r.campo_ayuda ?? null,
         config: parseJsonSafe(r.campo_config),
         requerido: toBool(r.campo_requerido),
         pagina: {
           id_pagina: r.pagina_id,
           nombre: r.pagina_nombre,
-          secuencia: r.pagina_secuencia ?? null,
+          secuencia: r.pagina_secuencia,
         },
       });
     }
@@ -248,7 +249,9 @@ ORDER BY g.nombre, fp.secuencia, fpc.sequence, fc.id_campo;
         const pa = a.pagina.secuencia ?? 0;
         const pb = b.pagina.secuencia ?? 0;
         if (pa !== pb) return pa - pb;
-        if (a.sequence !== b.sequence) return a.sequence - b.sequence;
+        if ((a.sequence ?? 0) !== (b.sequence ?? 0)) {
+          return (a.sequence ?? 0) - (b.sequence ?? 0);
+        }
         return a.id_campo.localeCompare(b.id_campo);
       });
     }

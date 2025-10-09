@@ -1,49 +1,132 @@
-// src/auth/auth.service.ts
 import { Injectable, UnauthorizedException } from '@nestjs/common';
-import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { User } from './entities/user.entity';
-import { verifyPassword } from './crypto/argon2.util';
-import type { JwtPayload } from './types/auth.types';
+import { JwtService } from '@nestjs/jwt';
+
+import { Usuario } from './entities/formularios-usuario.entity';
+import { UsuarioGroup } from './entities/formularios-usuario-groups.entity';
+import { UsuarioUserPermission } from './entities/formularios-usuario-user-permissions.entity';
+import type { AuthUser, JwtPayload, LoginResult } from './types/auth.types';
+
+// Reutilizamos tu util de Argon2 (PHC)
+import { verifyPassword as verifyArgon2 } from './crypto/argon2.util';
 
 @Injectable()
 export class AuthService {
   constructor(
-    @InjectRepository(User) private readonly usersRepo: Repository<User>,
-    private readonly jwt: JwtService,
+    @InjectRepository(Usuario) private readonly usersRepo: Repository<Usuario>,
+    @InjectRepository(UsuarioGroup)
+    private readonly userGroupsRepo: Repository<UsuarioGroup>,
+    @InjectRepository(UsuarioUserPermission)
+    private readonly userPermsRepo: Repository<UsuarioUserPermission>,
+    private readonly jwtService: JwtService,
   ) {}
 
-  login = async (nombre_usuario: string, plainPassword: string) => {
-    // Busca por username (no por email)
-    const user = await this.usersRepo.findOne({
-      where: { nombre_usuario },
-      relations: { roles: true },
+  // ─────────────────────────────────────────────
+  // Helpers
+  // ─────────────────────────────────────────────
+  private static isArgon2PHC(pw: string): boolean {
+    // Formato PHC: $argon2id$..., $argon2i$..., $argon2d$...
+    return /^\$argon2(id|i|d)\$/.test(pw);
+  }
+
+  private static async verifyPassword(
+    raw: string,
+    stored: string,
+  ): Promise<boolean> {
+    if (!stored) return false;
+    if (!AuthService.isArgon2PHC(stored)) {
+      // Estándar único: rechazamos si no es Argon2 PHC
+      return false;
+    }
+    try {
+      return await verifyArgon2(stored, raw);
+    } catch {
+      return false;
+    }
+  }
+
+  private async hydrateAuthUser(nombreUsuario: string): Promise<AuthUser> {
+    const u = await this.usersRepo.findOne({ where: { nombreUsuario } });
+    if (!u) throw new UnauthorizedException('Usuario no encontrado');
+
+    const groupsRows = await this.userGroupsRepo.find({
+      where: { usuarioId: u.nombreUsuario },
     });
-    if (!user) throw new UnauthorizedException('Credenciales inválidas');
+    const permsRows = await this.userPermsRepo.find({
+      where: { usuarioId: u.nombreUsuario },
+    });
 
-    const ok = await verifyPassword(user.contrasena, plainPassword);
-    if (!ok) throw new UnauthorizedException('Credenciales inválidas');
+    const groups = groupsRows.map((g) => g.groupId);
+    const permissions = permsRows.map((p) => p.permissionId);
 
+    return {
+      nombre_usuario: u.nombreUsuario,
+      nombre: u.nombre,
+      correo: u.correo,
+      activo: u.activo,
+      acceso_web: u.accesoWeb,
+      is_staff: u.isStaff,
+      is_superuser: u.isSuperuser,
+      groups,
+      permissions,
+    };
+  }
+
+  private async issueToken(user: AuthUser): Promise<LoginResult> {
     const payload: JwtPayload = {
-      username: user.nombre_usuario,
-      rolesId: user.roles.map((r) => r.id),
-      rolesName: user.roles.map((r) => r.nombre),
+      sub: user.nombre_usuario,
+      correo: user.correo,
+      is_staff: user.is_staff,
+      is_superuser: user.is_superuser,
+      groups: user.groups,
     };
 
-    const accessToken = await this.jwt.signAsync(payload, {
-      secret: process.env.JWT_SECRET || 'dev-secret',
-      algorithm: 'HS384',
-      expiresIn: process.env.JWT_EXPIRES_IN || '1h',
+    const expiresIn = Number(process.env.JWT_EXPIRES_IN_SECONDS ?? '86400'); // 1 día
+    const access_token = await this.jwtService.signAsync(payload, {
+      expiresIn,
     });
 
     return {
-      access_token: accessToken,
-      user: {
-        nombre: user.nombre,
-        nombre_usuario: user.nombre_usuario,
-        roles: user.roles.map((r) => ({ id: r.id, nombre: r.nombre })),
-      },
+      access_token,
+      token_type: 'Bearer',
+      expires_in: expiresIn,
+      user,
     };
-  };
+  }
+
+  // ─────────────────────────────────────────────
+  // API
+  // ─────────────────────────────────────────────
+
+  async validateUser(username: string, password: string): Promise<AuthUser> {
+    const user = await this.usersRepo.findOne({
+      where: { nombreUsuario: username },
+    });
+    if (!user) throw new UnauthorizedException('Credenciales inválidas');
+    if (!user.activo) {
+      throw new UnauthorizedException('Usuario inactivo o sin acceso web');
+    }
+    const ok = await AuthService.verifyPassword(password, user.password);
+    if (!ok) throw new UnauthorizedException('Credenciales inválidas');
+
+    return this.hydrateAuthUser(user.nombreUsuario);
+  }
+
+  // Overloads: soporta login(user) y login(username, password)
+  async login(user: AuthUser): Promise<LoginResult>;
+  async login(username: string, password: string): Promise<LoginResult>;
+  async login(a: AuthUser | string, b?: string): Promise<LoginResult> {
+    if (typeof a === 'string') {
+      // (username, password)
+      const user: AuthUser = await this.validateUser(a, b ?? '');
+      return this.issueToken(user);
+    }
+    // (user)
+    return this.issueToken(a);
+  }
+
+  async me(nombreUsuario: string): Promise<AuthUser> {
+    return this.hydrateAuthUser(nombreUsuario);
+  }
 }

@@ -1,14 +1,14 @@
-import { Entity, ManyToOne, PrimaryColumn, JoinColumn } from 'typeorm';
+import { Entity, ManyToOne, PrimaryColumn, JoinColumn, Column } from 'typeorm';
 import { FormularioVersion } from './formulario-version.entity';
 import { Pagina } from './pagina.entity';
 
-@Entity('dbo.formularios_pagina_index_version')
+@Entity({ name: 'formularios_pagina_index_version' })
 export class PaginaIndexVersion {
-  @PrimaryColumn({ type: 'varchar', length: 36, name: 'id_index_version' })
-  indexVersionId!: string;
-
-  @PrimaryColumn({ type: 'varchar', length: 36, name: 'id_pagina' })
+  @PrimaryColumn({ type: 'uuid', name: 'id_pagina' })
   paginaId!: string;
+
+  @Column({ type: 'uuid', name: 'id_index_version' })
+  indexVersionId!: string;
 
   @ManyToOne(() => FormularioVersion, (v) => v.paginasLink, {
     onDelete: 'CASCADE',

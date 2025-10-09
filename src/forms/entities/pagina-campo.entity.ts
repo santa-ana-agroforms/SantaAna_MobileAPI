@@ -1,17 +1,30 @@
-import { Column, Entity, JoinColumn, ManyToOne, PrimaryColumn } from 'typeorm';
+import {
+  Check,
+  Column,
+  Entity,
+  JoinColumn,
+  ManyToOne,
+  PrimaryColumn,
+  Unique,
+} from 'typeorm';
 import { PaginaVersion } from './pagina-version.entity';
 import { Campo } from './campo.entity';
 
-@Entity('dbo.formularios_pagina_campo')
+@Entity({ name: 'formularios_pagina_campo' })
+@Unique('formularios_pagina_campo_id_campo_id_pagina_versi_bad4d405_uniq', [
+  'campoId',
+  'paginaVersionId',
+])
+@Check('sequence >= 0')
 export class PaginaCampo {
-  @PrimaryColumn({ type: 'varchar', length: 36, name: 'id_pagina_version' })
-  paginaVersionId!: string;
-
-  @PrimaryColumn({ type: 'varchar', length: 36, name: 'id_campo' })
+  @PrimaryColumn({ type: 'varchar', length: 32, name: 'id_campo' })
   campoId!: string;
 
-  @Column({ type: 'int', name: 'sequence', default: 1 })
-  sequence!: number;
+  @Column({ type: 'int', name: 'sequence', nullable: true })
+  sequence!: number | null;
+
+  @Column({ type: 'varchar', length: 32, name: 'id_pagina_version' })
+  paginaVersionId!: string;
 
   @ManyToOne(() => PaginaVersion, (pv) => pv.campos, { onDelete: 'CASCADE' })
   @JoinColumn({

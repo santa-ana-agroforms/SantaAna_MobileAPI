@@ -1,5 +1,7 @@
 import { Column, Entity, OneToMany, PrimaryColumn } from 'typeorm';
+import { FormularioVersion } from './formulario-version.entity';
 import { FormularioVersionLink } from './formulario-version-link.entity';
+import { Pagina } from './pagina.entity';
 
 export enum FormaEnvio {
   EnLineaFueraLinea = 'En Linea/fuera Linea',
@@ -7,53 +9,56 @@ export enum FormaEnvio {
 
 export enum EstadoFormulario {
   Ingresada = 'Ingresada',
-  // agregá otros estados que uses
+  // agrega otros estados que uses
 }
 
-@Entity('dbo.formularios_formulario')
+@Entity({ name: 'formularios_formulario' })
 export class Formulario {
-  @PrimaryColumn({ type: 'varchar', length: 36 })
+  @PrimaryColumn({ type: 'uuid', name: 'id' })
   id!: string;
 
-  @Column({ type: 'nvarchar', length: 255 })
+  @Column({ type: 'varchar', length: 100 })
   nombre!: string;
 
-  @Column({ type: 'nvarchar', length: 1000, nullable: true })
-  descripcion!: string | null;
+  @Column({ type: 'text' })
+  descripcion!: string;
 
-  @Column({ type: 'bit', name: 'permitir_fotos', default: false })
+  @Column({ type: 'boolean', name: 'permitir_fotos' })
   permitirFotos!: boolean;
 
-  @Column({ type: 'bit', name: 'permitir_gps', default: false })
+  @Column({ type: 'boolean', name: 'permitir_gps' })
   permitirGps!: boolean;
 
-  @Column({ type: 'date', name: 'disponible_desde_fecha', nullable: true })
-  disponibleDesdeFecha!: string | null;
+  @Column({ type: 'date', name: 'disponible_desde_fecha' })
+  disponibleDesdeFecha!: string;
 
-  @Column({ type: 'date', name: 'disponible_hasta_fecha', nullable: true })
-  disponibleHastaFecha!: string | null;
+  @Column({ type: 'date', name: 'disponible_hasta_fecha' })
+  disponibleHastaFecha!: string;
 
-  @Column({ type: 'nvarchar', length: 100, name: 'estado', nullable: true })
-  estado!: EstadoFormulario | null;
+  @Column({ type: 'varchar', length: 20 })
+  estado!: EstadoFormulario;
 
-  @Column({
-    type: 'nvarchar',
-    length: 100,
-    name: 'forma_envio',
-    nullable: true,
-  })
-  formaEnvio!: FormaEnvio | null;
+  @Column({ type: 'varchar', length: 30, name: 'forma_envio' })
+  formaEnvio!: FormaEnvio;
 
-  @Column({ type: 'bit', name: 'es_publico', default: false })
+  @Column({ type: 'boolean', name: 'es_publico' })
   esPublico!: boolean;
 
-  @Column({ type: 'bit', name: 'auto_envio', default: false })
+  @Column({ type: 'boolean', name: 'auto_envio' })
   autoEnvio!: boolean;
 
-  @Column({ type: 'varchar', length: 36, name: 'categoria_id', nullable: true })
+  @Column({ type: 'uuid', name: 'categoria_id', nullable: true })
   categoriaId!: string | null;
 
-  // Rel: uno a muchos con el link a versiones
+  // Relación directa a versiones (tabla formularios_formularioindexversion)
+  @OneToMany(() => FormularioVersion, (v) => v.formulario)
+  versiones!: FormularioVersion[];
+
+  // Relación por tabla puente (formularios_formularios_index_version)
   @OneToMany(() => FormularioVersionLink, (l) => l.formulario)
   versionesLink!: FormularioVersionLink[];
+
+  // Relación a páginas
+  @OneToMany(() => Pagina, (p) => p.formulario)
+  paginas!: Pagina[];
 }
