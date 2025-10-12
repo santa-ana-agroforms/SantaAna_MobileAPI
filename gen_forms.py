@@ -1,25 +1,30 @@
 ﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Generador de formularios (categorí­as, versiones, páginas, campos y grupos) + usuario/rol dedicado.
+Generador de formularios (categorías, versiones, páginas, campos y grupos) para PostgreSQL
++ asignación a usuario (opcional) o publicación masiva si no se provee usuario.
 
-Novedades:
-- --create-user crea:
-    1) Rol exclusivo en dbo.formularios_rol (sin ledger_*).
-    2) Usuario en dbo.formularios_usuario con contraseña Argon2 (sin ledger_*).
-    3) Relación en dbo.formularios_rol_user (sin ledger_*).
-    4) Asigna TODOS los formularios generados a ese rol en dbo.formularios_rol_formulario (sin ledger_*).
-- --export-credentials escribe TXT con usuario + contraseña en claro (DB guarda solo hash).
-- Categorí­as aleatorias y distribución de formularios por categorí­a (igual que versión previa).
-- Grupos como campos (clase 'group'), tabla formularios_grupo y relación formularios_campo_grupo (sin ledger_*).
+Novedades clave para PostgreSQL:
+- UUID reales en tablas que lo usan (formulario, categoría, index_version, página).
+- Inserciones idempotentes con ON CONFLICT DO NOTHING donde aplica.
+- Sin roles: se asignan formularios directamente a un usuario (tabla formularios_user_formulario),
+  o se marcan como públicos si no se provee/crea usuario.
+- Usuario (tabla formularios_usuario) con password Argon2id (argon2-cffi), flags booleanos mínimos.
 
-Uso tí­pico:
-  python generador_formularios_sqlserver.py \
-    --emit-sql ./carga_formularios.sql \
-    --categories-count 4 --forms-per-category 3 \
-    --seed 42 --create-user --user-username "danvalA" \
-    --user-name "Daniel Valdez" --user-phone "502-5555-5555" \
-    --user-email "danval@example.com" --export-credentials ./credenciales.txt
+Uso típico:
+  python generador_formularios_postgres.py \
+    --emit-sql ./carga_pg.sql \
+    --categories-count 3 --forms-per-category 2 \
+    --seed 42 \
+    --create-user --assign-user "danvalA" \
+    --user-name "Daniel Valdez" --user-email "danval@example.com" \
+    --export-credentials ./credenciales.txt
+
+O conexión directa (sin --emit-sql):
+  python generador_formularios_postgres.py \
+    --pg-host localhost --pg-port 5432 --pg-db mi_db \
+    --pg-user myuser --pg-password secret \
+    --forms 3 --seed 1 --assign-user "usuario_existente"
 """
 import argparse
 import datetime as dt
@@ -31,24 +36,23 @@ import sys
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
+# Conexión Postgres (opcional si usás --emit-sql)
 try:
-    import pyodbc  # type: ignore
+    import psycopg2  # type: ignore
 except Exception:
-    pyodbc = None  # permite --emit-sql sin pyodbc
+    psycopg2 = None
 
-# Argon2 para hashear contraseñas
+# Argon2 para password seguro
 _HAS_ARGON2 = True
 try:
-    from argon2.low_level import hash_secret, Type  # type: ignore
-    from os import urandom
+    from argon2 import PasswordHasher  # high-level, Argon2id por defecto
 except Exception:
     _HAS_ARGON2 = False
-
 
 # ========= Utilidades =========
 
 def hex32() -> str:
-    return uuid.uuid4().hex  # 32 chars miníºsculas sin guiones
+    return uuid.uuid4().hex  # 32 chars minúsculas sin guiones
 
 def pick(seq):
     return random.choice(seq)
@@ -64,7 +68,8 @@ def rand_bool() -> bool:
 def rand_text(min_len=10, max_len=40) -> str:
     L = random.randint(min_len, max_len)
     letters = string.ascii_letters + "     "
-    return "".join(random.choice(letters) for _ in range(L)).strip().capitalize()
+    out = "".join(random.choice(letters) for _ in range(L)).strip().capitalize()
+    return out or "Texto auto"
 
 def rand_label() -> str:
     prefixes = ["Peso", "Altura", "Humedad", "Temperatura", "Operario", "Finca", "Lote",
@@ -72,11 +77,11 @@ def rand_label() -> str:
     return f"{pick(prefixes)} {random.randint(1, 999)}"
 
 def rand_unit() -> Optional[str]:
-    return pick(["$", "â‚¬", "Â£", "Q", None])
+    return pick(["$", "€", "£", "Q", None])
 
-def now_dt() -> str:
-    import datetime as _dt
-    return _dt.datetime.utcnow().isoformat(timespec="seconds") + "Z"
+def now_dt_iso() -> str:
+    # ISO-8601 con "Z", válido para timestamptz en Postgres
+    return dt.datetime.utcnow().isoformat(timespec="seconds") + "Z"
 
 def random_password(min_len: int = 12, max_len: int = 16) -> str:
     L = random.randint(min_len, max_len)
@@ -86,19 +91,8 @@ def random_password(min_len: int = 12, max_len: int = 16) -> str:
 def hash_password_argon2(plain: str) -> str:
     if not _HAS_ARGON2:
         raise RuntimeError("Falta argon2-cffi. Instale con: pip install argon2-cffi")
-    salt = urandom(16)  # 16 bytes
-    phc = hash_secret(
-        secret=plain.encode("utf-8"),
-        salt=salt,
-        time_cost=3,
-        memory_cost=65536,  # KiB = 64MiB
-        parallelism=1,
-        hash_len=32,
-        type=Type.ID,
-        version=19,
-    )
-    return phc.decode("utf-8")
-
+    ph = PasswordHasher(time_cost=3, memory_cost=65536, parallelism=1, hash_len=32)  # Argon2id
+    return ph.hash(plain)
 
 # ========= Clases de campo y configs =========
 
@@ -115,7 +109,7 @@ CLASES_Y_ESTRUCTURA: Dict[str, Dict[str, Any]] = {
     },
     "hour": {},
     "list": {"id_list": ["string"], "items": ["string", "number", "boolean"]},
-    "number": {"min": [None, "number"], "max": [None, "number"], "step": [None, "number"], "unit": [None, "$", "â‚¬", "Â£", "Q"]},
+    "number": {"min": [None, "number"], "max": [None, "number"], "step": [None, "number"], "unit": [None, "$", "€", "£", "Q"]},
     "string": {},
     "text": {},
 }
@@ -159,7 +153,6 @@ def pick_clase(group_allowed: bool = True) -> str:
             return k
     return items[-1][0]
 
-
 # ========= Evitar duplicados de nombre_campo =========
 
 RUN_PREFIX = uuid.uuid4().hex[:6]
@@ -181,10 +174,13 @@ def unique_nombre_campo(base: str, max_len: int = 64) -> str:
     GENERATED_NOMBRES.add(cand)
     return cand
 
-
-# ========= Emisor SQL =========
+# ========= Emisor SQL (compatible con archivo o ejecución directa) =========
 
 class SqlEmitter:
+    """
+    Para simplificar, hacemos interpolación segura manual (escapando strings) y
+    ejecutamos sentencia por sentencia.
+    """
     def __init__(self, cnxn=None, emit_sql_path: Optional[str] = None):
         self.cnxn = cnxn
         self.cursor = cnxn.cursor() if cnxn else None
@@ -192,7 +188,7 @@ class SqlEmitter:
         self._lines: List[str] = []
         if self.emit_sql_path:
             self._lines.append("-- Archivo generado automáticamente")
-            self._lines.append("SET NOCOUNT ON;")
+            self._lines.append("SET client_min_messages TO WARNING;")
             self._lines.append("")
 
     def comment(self, text: str):
@@ -205,23 +201,22 @@ class SqlEmitter:
         if isinstance(p, (int, float)):
             return str(p)
         if isinstance(p, bool):
-            return "1" if p else "0"
-        if isinstance(p, (bytes, bytearray)):
-            return "0x" + p.hex()
+            return "TRUE" if p else "FALSE"
         if p is None:
             return "NULL"
+        # UUIDs vienen como str; c/ISO también entra como str
         return "'" + str(p).replace("'", "''") + "'"
 
     def exec(self, sql: str, params: Optional[Tuple[Any, ...]] = None):
+        line = sql
+        if params:
+            for p in params:
+                line = line.replace("?", self._format_param(p), 1)
         if self.emit_sql_path:
-            line = sql
-            if params:
-                for p in params:
-                    line = line.replace("?", self._format_param(p), 1)
             self._lines.append(line.rstrip() + ";\n")
         else:
             assert self.cursor is not None
-            self.cursor.execute(sql, params or ())
+            self.cursor.execute(line)
 
     def commit(self):
         if self.emit_sql_path:
@@ -231,99 +226,110 @@ class SqlEmitter:
             assert self.cnxn is not None
             self.cnxn.commit()
 
-
 # ========= Insert helpers (tablas base) =========
 
 def ensure_clases_campo(em: SqlEmitter):
     for clase, estructura in CLASES_Y_ESTRUCTURA.items():
         sql = """
-        IF NOT EXISTS (SELECT 1 FROM dbo.formularios_clase_campo WHERE clase = ?)
-        BEGIN
-          INSERT INTO dbo.formularios_clase_campo (clase, estructura)
-          VALUES (?, ?)
-        END
+        INSERT INTO formularios_clase_campo (clase, estructura)
+        VALUES (?, ?)
+        ON CONFLICT (clase) DO NOTHING
         """
-        em.exec(sql, (clase, clase, json.dumps(estructura, ensure_ascii=False)))
+        em.exec(sql, (clase, json.dumps(estructura, ensure_ascii=False)))
 
 def ensure_categoria(em: SqlEmitter, nombre_base: str) -> str:
-    cat_id = hex32()
+    cat_id = str(uuid.uuid4())  # uuid nativo en PG
     unique_name = f"{nombre_base.strip()} {random.randint(1, 9999)}"
-    desc = f"Categorí­a auto {unique_name}"
-    sql = "INSERT INTO dbo.formularios_categoria (id, nombre, descripcion) VALUES (?, ?, ?)"
+    desc = f"Categoría auto {unique_name}"
+    sql = "INSERT INTO formularios_categoria (id, nombre, descripcion) VALUES (?, ?, ?)"
     em.exec(sql, (cat_id, unique_name, desc))
     return cat_id
 
-def insert_formulario(em: SqlEmitter, categoria_id: Optional[str] = None) -> str:
-    fid = hex32()
+def insert_formulario(em: SqlEmitter, categoria_id: Optional[str], force_public: bool) -> str:
+    fid = str(uuid.uuid4())
     nombre = f"Formulario {rand_label()}"
     descripcion = rand_text(40, 120)
     permitir_fotos = rand_bool()
     permitir_gps = rand_bool()
-    disponible_desde = dt.date.today()
-    disponible_hasta = disponible_desde + dt.timedelta(days=random.randint(30, 365))
+    disponible_desde = dt.date.today().isoformat()
+    disponible_hasta = (dt.date.today() + dt.timedelta(days=random.randint(30, 365))).isoformat()
     estado = pick(["borrador", "activo", "inactivo"])
     forma_envio = pick(["online", "offline", "mixto"])
-    es_publico = rand_bool()
+    es_publico = True if force_public else rand_bool()
     auto_envio = rand_bool()
-    if not categoria_id:
-        categoria_id = hex32()
+    categoria_id = categoria_id or str(uuid.uuid4())
 
     sql = """
-    INSERT INTO dbo.formularios_formulario
+    INSERT INTO formularios_formulario
         (id, nombre, descripcion, permitir_fotos, permitir_gps,
          disponible_desde_fecha, disponible_hasta_fecha, estado, forma_envio,
          es_publico, auto_envio, categoria_id)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
     em.exec(sql, (
-        fid, nombre, descripcion, 1 if permitir_fotos else 0, 1 if permitir_gps else 0,
-        disponible_desde.isoformat(), disponible_hasta.isoformat(), estado, forma_envio,
-        1 if es_publico else 0, 1 if auto_envio else 0, categoria_id
+        fid, nombre, descripcion, permitir_fotos, permitir_gps,
+        disponible_desde, disponible_hasta, estado, forma_envio,
+        es_publico, auto_envio, categoria_id
     ))
     return fid
 
 def insert_index_version(em: SqlEmitter, formulario_id: str) -> str:
-    ivid = hex32()
-    fecha_creacion = now_dt()
+    ivid = str(uuid.uuid4())
+    fecha_creacion = now_dt_iso()
     sql1 = """
-    INSERT INTO dbo.formularios_formularioindexversion (id_index_version, formulario_id, fecha_creacion)
+    INSERT INTO formularios_formularioindexversion (id_index_version, fecha_creacion, formulario_id)
     VALUES (?, ?, ?)
     """
-    em.exec(sql1, (ivid, formulario_id, fecha_creacion))
+    em.exec(sql1, (ivid, fecha_creacion, formulario_id))
     sql2 = """
-    INSERT INTO dbo.formularios_formularios_index_version (id_formulario, id_index_version)
+    INSERT INTO formularios_formularios_index_version (id_index_version, id_formulario)
     VALUES (?, ?)
     """
-    em.exec(sql2, (formulario_id, ivid))
+    em.exec(sql2, (ivid, formulario_id))
     return ivid
 
 def insert_pagina(em: SqlEmitter, formulario_id: str, index_version_id: str, secuencia: int) -> str:
-    pid = hex32()
+    pid = str(uuid.uuid4())
     nombre = f"Página {secuencia}"
     descripcion = rand_text(30, 90)
     sql = """
-    INSERT INTO dbo.formularios_pagina
+    INSERT INTO formularios_pagina
         (id_pagina, secuencia, nombre, descripcion, formulario_id, index_version_id)
     VALUES (?, ?, ?, ?, ?, ?)
     """
     em.exec(sql, (pid, secuencia, nombre, descripcion, formulario_id, index_version_id))
-    sql2 = "INSERT INTO dbo.formularios_pagina_index_version (id_pagina, id_index_version) VALUES (?, ?)"
-    em.exec(sql2, (pid, index_version_id))
-    sql3 = """
-    INSERT INTO dbo.formularios_paginaindex (id_formulario_id, id_index_version_id, id_pagina_id, fecha_creacion)
-    VALUES (?, ?, ?, ?)
+    sql2 = """
+    INSERT INTO formularios_pagina_index_version (id_pagina, id_index_version)
+    VALUES (?, ?)
+    ON CONFLICT (id_pagina) DO NOTHING
     """
-    em.exec(sql3, (formulario_id, index_version_id, pid, now_dt()))
+    em.exec(sql2, (pid, index_version_id))
     return pid
 
 def insert_pagina_version(em: SqlEmitter, id_pagina: str) -> str:
-    pvid = hex32()
-    sql = "INSERT INTO dbo.formularios_pagina_version (id_pagina_version, id_pagina, fecha_creacion) VALUES (?, ?, ?)"
-    em.exec(sql, (pvid, id_pagina, now_dt()))
+    """
+    En tu esquema PG, formularios_pagina_version.id_pagina = varchar(32).
+    Pero formularios_pagina.id_pagina es uuid (36 con guiones).
+    Convertimos el uuid a 32 hex sin guiones para que quepa.
+    """
+    pvid = hex32()  # varchar(32) para id_pagina_version
+    id_pagina_compact = id_pagina.replace("-", "")  # 36 -> 32
+
+    # Por si algún día llega algo que no sea uuid con guiones:
+    if len(id_pagina_compact) != 32:
+        # último recurso: trimear o rellenar, pero normalmente NO debería pasar
+        id_pagina_compact = (id_pagina_compact[:32]).ljust(32, "0")
+
+    sql = """
+    INSERT INTO formularios_pagina_version (id_pagina_version, fecha_creacion, id_pagina)
+    VALUES (?, ?, ?)
+    """
+    em.exec(sql, (pvid, now_dt_iso(), id_pagina_compact))
     return pvid
 
+
 def insert_campo(em: SqlEmitter, clase: str, *, config: Optional[Dict[str, Any]] = None) -> str:
-    cid = hex32()
+    cid = hex32()  # varchar(32)
     tipo = MAP_TIPO_POR_CLASE.get(clase, "texto")
     base_name = slugify_name(f"{clase}_{rand_label()}")
     nombre_campo = unique_nombre_campo(base_name)
@@ -332,9 +338,10 @@ def insert_campo(em: SqlEmitter, clase: str, *, config: Optional[Dict[str, Any]]
     if config is None:
         config = gen_config_para_clase(clase)
     config_json = json.dumps(config, ensure_ascii=False)
-    requerido = 1 if rand_bool() else 0  # BIT
+    requerido = rand_bool()
+
     sql = """
-    INSERT INTO dbo.formularios_campo
+    INSERT INTO formularios_campo
         (id_campo, tipo, clase, nombre_campo, etiqueta, ayuda, config, requerido)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     """
@@ -342,77 +349,103 @@ def insert_campo(em: SqlEmitter, clase: str, *, config: Optional[Dict[str, Any]]
     return cid
 
 def insert_pagina_campo(em: SqlEmitter, id_pagina_version: str, id_campo: str, sequence: int):
-    sql = "INSERT INTO dbo.formularios_pagina_campo (id_pagina_version, id_campo, sequence) VALUES (?, ?, ?)"
-    em.exec(sql, (id_pagina_version, id_campo, sequence))
+    sql = """
+    INSERT INTO formularios_pagina_campo (id_campo, sequence, id_pagina_version)
+    VALUES (?, ?, ?)
+    """
+    em.exec(sql, (id_campo, sequence, id_pagina_version))
 
+# ========= Grupos (estructura PG) =========
 
-# ========= Grupos =========
-
-def insert_grupo(em: SqlEmitter, nombre: str) -> Tuple[str, str]:
-    """ En ledger REAL no se insertan columnas ledger_* (GENERATED ALWAYS). """
-    gid = hex32()
-    unique_name = f"{nombre} {RUN_PREFIX}-{random.randint(100,999)}"
-    sql = "INSERT INTO dbo.formularios_grupo (id_grupo, nombre) VALUES (?, ?)"
-    em.exec(sql, (gid, unique_name))
-    return gid, unique_name
+def insert_grupo_pg(em: SqlEmitter, id_grupo: str, nombre: str, id_campo_group: str):
+    """
+    En PG, formularios_grupo requiere id_campo_group (FK a formularios_campo).
+    """
+    sql = """
+    INSERT INTO formularios_grupo (id_grupo, nombre, id_campo_group)
+    VALUES (?, ?, ?)
+    """
+    em.exec(sql, (id_grupo, nombre, id_campo_group))
 
 def link_campo_a_grupo(em: SqlEmitter, id_grupo: str, id_campo: str):
-    """ En ledger REAL no se insertan columnas ledger_* (GENERATED ALWAYS). """
-    sql = "INSERT INTO dbo.formularios_campo_grupo (id_grupo, id_campo) VALUES (?, ?)"
-    em.exec(sql, (id_grupo, id_campo))
+    sql = """
+    INSERT INTO formularios_campo_grupo (id_grupo, id_campo)
+    SELECT ?, ?
+    WHERE NOT EXISTS (
+      SELECT 1 FROM formularios_campo_grupo WHERE id_grupo = ? AND id_campo = ?
+    )
+    """
+    em.exec(sql, (id_grupo, id_campo, id_grupo, id_campo))
 
+# ========= Usuario & asignación directa de formularios =========
 
-# ========= Usuario / Rol exclusivo =========
-
-def create_role_exclusive(em: SqlEmitter, username: str, role_name: Optional[str] = None) -> str:
-    role_id = hex32()
-    rname = role_name or f"Rol-{username}-{RUN_PREFIX}"
-    desc = f"Rol exclusivo para {username} (corrida {RUN_PREFIX})"
-    sql = "INSERT INTO dbo.formularios_rol (id, nombre, descripcion) VALUES (?, ?, ?)"
-    em.exec(sql, (role_id, rname, desc))
-    return role_id
-
-def create_user_with_role(
+def ensure_user_exists_or_create(
     em: SqlEmitter,
     username: str,
     name: str,
-    phone: str,
     email: Optional[str],
-    role_id: str,
-    plain_password: Optional[str] = None,
-) -> Tuple[str, str]:
-    """Crea usuario con hash Argon2 y lo asocia a su rol.
-    Devuelve (username, plain_password) para exportar credenciales."""
+    plain_password: Optional[str],
+    make_active: bool = True,
+    acceso_web: bool = True,
+    is_staff: bool = False,
+    is_superuser: bool = False,
+    export_credentials_path: Optional[str] = None,
+) -> Tuple[str, Optional[str]]:
+    """
+    Si el usuario no existe, lo crea. Si existe, no lo toca.
+    Devuelve (username, password_plano_si_se_creó).
+    """
+    # ¿Existe?
+    sql_exists = "SELECT 1 FROM formularios_usuario WHERE nombre_usuario = ?"
+    if em.emit_sql_path:
+        # No podemos hacer SELECT real en modo archivo; asumimos que no existe y emitimos UPSERT naive
+        pass
+    else:
+        em.cursor.execute(sql_exists.replace("?", "%s"), (username,))  # type: ignore
+        if em.cursor.fetchone():
+            return username, None
+
     pwd = plain_password or random_password()
     pwd_hash = hash_password_argon2(pwd)
 
-    # dbo.formularios_usuario (ledger: NO insertar ledger_*)
-    sql = """
-    INSERT INTO dbo.formularios_usuario
-        (nombre, telefono, correo, contrasena, rol_id, nombre_usuario)
-    VALUES (?, ?, ?, ?, ?, ?)
+    correo = email or f"{username}@example.local"
+    sql_ins = """
+    INSERT INTO formularios_usuario
+      (last_login, nombre_usuario, nombre, correo, password, activo, acceso_web, is_staff, is_superuser)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT (nombre_usuario) DO NOTHING
     """
-    em.exec(sql, (name, phone, email, pwd_hash, role_id, username))
+    em.exec(sql_ins, (None, username, name, correo, pwd_hash,
+                      make_active, acceso_web, is_staff, is_superuser))
 
-    # dbo.formularios_rol_user (ledger: NO insertar ledger_*)
-    sql2 = "INSERT INTO dbo.formularios_rol_user (id_rol, nombre_usuario) VALUES (?, ?)"
-    em.exec(sql2, (role_id, username))
-
+    # Exportar credenciales si pidieron
+    if export_credentials_path:
+        try:
+            with open(export_credentials_path, "a", encoding="utf-8") as fh:
+                fh.write(f"usuario: {username}\npassword: {pwd}\n\n")
+        except Exception:
+            pass
     return username, pwd
 
-def link_form_to_role(em: SqlEmitter, form_id: str, role_id: str):
-    """ dbo.formularios_rol_formulario (ledger: NO insertar ledger_*) """
-    sql = """
-    IF NOT EXISTS (
-        SELECT 1 FROM dbo.formularios_rol_formulario
-        WHERE id_formulario = ? AND rol_id = ? AND ledger_end_transaction_id IS NULL
-    )
-    BEGIN
-        INSERT INTO dbo.formularios_rol_formulario (id_formulario, rol_id) VALUES (?, ?)
-    END
-    """
-    em.exec(sql, (form_id, role_id, form_id, role_id))
+def assign_forms_to_user(em: SqlEmitter, username: str, form_ids: List[str]):
+    for fid in form_ids:
+        sql = """
+        INSERT INTO formularios_user_formulario (id_formulario_id, id_usuario_id)
+        SELECT ?, ?
+        WHERE NOT EXISTS (
+          SELECT 1 FROM formularios_user_formulario
+          WHERE id_formulario_id = ? AND id_usuario_id = ?
+        )
+        """
+        em.exec(sql, (fid, username, fid, username))
 
+def set_all_public(em: SqlEmitter, form_ids: List[str]):
+    if not form_ids:
+        return
+    # En lote por simplicidad (uno por uno)
+    for fid in form_ids:
+        sql = "UPDATE formularios_formulario SET es_publico = TRUE WHERE id = ?"
+        em.exec(sql, (fid,))
 
 # ========= Config generador por clase =========
 
@@ -431,7 +464,7 @@ def gen_config_para_clase(clase: str) -> Dict[str, Any]:
     if clase == "firm":
         return {}
     if clase == "group":
-        # Se define al crear el grupo (id/nombre). Aquí­ placeholder por si acaso.
+        # se completa al crear el grupo
         return {"id_group": "", "name": "", "fieldCondition": "always"}
     if clase == "hour":
         return {}
@@ -445,7 +478,7 @@ def gen_config_para_clase(clase: str) -> Dict[str, Any]:
                 items.append(random.randint(1, 100))
             else:
                 items.append(rand_bool())
-        return {"id_list": hex32(), "items": items}
+        return {"id_list": str(uuid.uuid4()), "items": items}
     if clase == "number":
         minimo = random.choice([None, random.randint(0, 50)])
         maximo = random.choice([None, random.randint(51, 200)])
@@ -458,15 +491,14 @@ def gen_config_para_clase(clase: str) -> Dict[str, Any]:
         return {}
     return {}
 
-
-# ========= Categorí­as aleatorias =========
+# ========= Categorías aleatorias =========
 
 CATEGORY_NAME_POOL = [
     "Cosecha", "Corte", "Transporte", "Mantenimiento", "Fertirriego",
     "Riego", "Aplicaciones", "Calidad", "Bodega", "Seguridad",
-    "Mecánica", "Elí©ctrico", "Topografí­a", "Laboratorio", "Empaque",
+    "Mecánica", "Eléctrico", "Topografía", "Laboratorio", "Empaque",
     "Siembra", "Siembra Mecanizada", "Cosecha Manual", "Vivero", "Sanidad",
-    "Rutas", "Logí­stica", "Producción", "RRHH Campo", "Capacitación"
+    "Rutas", "Logística", "Producción", "RRHH Campo", "Capacitación"
 ]
 
 def build_random_category_names(n: int) -> List[str]:
@@ -479,7 +511,6 @@ def build_random_category_names(n: int) -> List[str]:
         names.append(f"Categoria Auto {i}")
         i += 1
     return names[:n]
-
 
 # ========= Generación principal =========
 
@@ -498,7 +529,7 @@ def _parse_forms_by_category_map(spec: str) -> Dict[str, int]:
             raise ValueError(f"Par inválido '{part}'. Ejemplo: Corte:2")
         result[name] = int(cnt)
     if not result:
-        raise ValueError("Mapa vací­o en --forms-by-category.")
+        raise ValueError("Mapa vacío en --forms-by-category.")
     return result
 
 def generate(
@@ -516,20 +547,21 @@ def generate(
     forms_per_category: Optional[int] = None,
     min_forms_per_category: Optional[int] = None,
     max_forms_per_category: Optional[int] = None,
-    # Para usuario/rol
-    role_for_run: Optional[str] = None,  # si viene, se usa para vincular formularios
+    *,
+    force_public_if_no_user: bool,
 ) -> Tuple[List[str], Dict[str, str]]:
-    """Genera formularios y retorna:
-       - forms_created: lista de IDs de formularios creados
-       - cat_ids_by_name: mapa nombre->id de categorí­as creadas
+    """
+    Genera formularios y retorna:
+      - forms_created: lista de IDs (uuid) de formularios creados
+      - cat_ids_by_name: mapa nombre->uuid de categorías creadas
     """
     ensure_clases_campo(em)
 
-    # Resolver categorí­as
+    # Resolver categorías
     default_cats = ["Corte", "Transporte", "Mantenimiento", "Fertirriego", "Cosecha"]
     if categories and len(categories) > 0:
         cat_names = categories
-        origin = "explí­citas (--categories)"
+        origin = "explícitas (--categories)"
     elif categories_count and categories_count > 0:
         cat_names = build_random_category_names(categories_count)
         origin = f"aleatorias (--categories-count={categories_count})"
@@ -540,8 +572,8 @@ def generate(
     cat_ids_by_name: Dict[str, str] = {n: ensure_categoria(em, n) for n in cat_names}
     cat_id_list = list(cat_ids_by_name.values())
 
-    em.comment(f"Origen de categorí­as: {origin}")
-    em.comment("Resumen de categorí­as (nombre -> id) para esta corrida:")
+    em.comment(f"Origen de categorías: {origin}")
+    em.comment("Resumen de categorías (nombre -> id) para esta corrida:")
     for n, cid in cat_ids_by_name.items():
         em.comment(f"  - {n} -> {cid}")
     em.comment("")
@@ -549,11 +581,8 @@ def generate(
     forms_created: List[str] = []
 
     def _gen_form_for_category(cid: str):
-        fid = insert_formulario(em, cid)
+        fid = insert_formulario(em, cid, force_public=force_public_if_no_user)
         forms_created.append(fid)
-        # Vincular a rol (si aplica)
-        if role_for_run:
-            link_form_to_role(em, fid, role_for_run)
 
         n_versions = random.randint(min_versions, max_versions)
         for _ in range(n_versions):
@@ -574,16 +603,26 @@ def generate(
                     if clase == "group" and not group_used:
                         group_used = True
                         base_name = f"Grupo {rand_label()}"
-                        gid, gname = insert_grupo(em, base_name)
+                        gid = ("grp_" + uuid.uuid4().hex)[:64]
+                        gname = base_name
+
+                        # 1) crear campo de grupo con config que referencie el id_grupo
                         cfg = {"id_group": gid, "name": gname, "fieldCondition": "always"}
                         campo_group_id = insert_campo(em, "group", config=cfg)
+
+                        # 2) crear fila en formularios_grupo (requiere id_campo_group)
+                        insert_grupo_pg(em, gid, gname, campo_group_id)
+
+                        # 3) colocar el campo de grupo en la página
                         insert_pagina_campo(em, pvid, campo_group_id, s)
+
                         grupo_info = {"group_id": gid, "campo_group_id": campo_group_id, "name": gname}
                     else:
                         cid_ = insert_campo(em, clase)
                         insert_pagina_campo(em, pvid, cid_, s)
                         non_group_campos.append(cid_)
 
+                # Asignar algunos campos al grupo (si hubo grupo)
                 if grupo_info and non_group_campos:
                     k = random.randint(1, min(5, len(non_group_campos)))
                     miembros = random.sample(non_group_campos, k=k)
@@ -591,21 +630,21 @@ def generate(
                         link_campo_a_grupo(em, grupo_info["group_id"], cid_)
                     em.comment(f"Página {pseq}: grupo '{grupo_info['name']}' ({grupo_info['group_id']}) con {k} campo(s) asociado(s).")
 
-    # Distribución por categorí­a
+    # Distribución por categoría
     if forms_by_category:
         total = sum(forms_by_category.values())
-        em.comment(f"Distribución exacta por categorí­a (total formularios = {total}):")
+        em.comment(f"Distribución exacta por categoría (total formularios = {total}):")
         for n, c in forms_by_category.items():
             em.comment(f"  - {n}: {c}")
             if n not in cat_ids_by_name:
-                raise ValueError(f"La categorí­a '{n}' indicada en --forms-by-category no está en --categories.")
+                raise ValueError(f"La categoría '{n}' indicada en --forms-by-category no está en --categories.")
         for n, count in forms_by_category.items():
             for _ in range(count):
                 _gen_form_for_category(cat_ids_by_name[n])
         return forms_created, cat_ids_by_name
 
     if forms_per_category is not None:
-        em.comment(f"Distribución fija: {forms_per_category} formulario(s) por categorí­a.")
+        em.comment(f"Distribución fija: {forms_per_category} formulario(s) por categoría.")
         for cid in cat_id_list:
             for _ in range(forms_per_category):
                 _gen_form_for_category(cid)
@@ -614,32 +653,32 @@ def generate(
     if (min_forms_per_category is not None) and (max_forms_per_category is not None):
         if min_forms_per_category > max_forms_per_category:
             raise ValueError("--min-forms-per-category no puede ser mayor que --max-forms-per-category.")
-        em.comment(f"Distribución aleatoria por categorí­a en rango [{min_forms_per_category}, {max_forms_per_category}].")
+        em.comment(f"Distribución aleatoria por categoría en rango [{min_forms_per_category}, {max_forms_per_category}].")
         total = 0
         for cid in cat_id_list:
             k = random.randint(min_forms_per_category, max_forms_per_category)
             total += k
             for _ in range(k):
                 _gen_form_for_category(cid)
-        em.comment(f"Total de formularios generados (suma por categorí­a): {total}")
+        em.comment(f"Total de formularios generados (suma por categoría): {total}")
         return forms_created, cat_ids_by_name
 
-    em.comment(f"Distribución aleatoria global entre {len(cat_ids_by_name)} categorí­a(s).")
+    em.comment(f"Distribución aleatoria global entre {len(cat_ids_by_name)} categoría(s).")
     for _ in range(n_forms):
         _gen_form_for_category(pick(cat_id_list))
     return forms_created, cat_ids_by_name
 
-
 # ========= CLI =========
 
 def main():
-    parser = argparse.ArgumentParser(description="Generador aleatorio de formularios con páginas/campos/grupos + usuario/rol.")
-    # Conexión
-    parser.add_argument("--server", type=str)
-    parser.add_argument("--database", type=str)
-    parser.add_argument("--user", type=str)
-    parser.add_argument("--password", type=str)
-    parser.add_argument("--driver", type=str, default="{ODBC Driver 17 for SQL Server}")
+    parser = argparse.ArgumentParser(description="Generador aleatorio de formularios para PostgreSQL (con asignación a usuario o publicación).")
+
+    # Conexión PG
+    parser.add_argument("--pg-host", type=str)
+    parser.add_argument("--pg-port", type=int, default=5432)
+    parser.add_argument("--pg-db", type=str)
+    parser.add_argument("--pg-user", type=str)
+    parser.add_argument("--pg-password", type=str)
 
     # Parámetros del generador
     parser.add_argument("--forms", type=int, default=2)
@@ -650,7 +689,7 @@ def main():
     parser.add_argument("--min-fields", type=int, default=3)
     parser.add_argument("--max-fields", type=int, default=6)
 
-    # Categorí­as
+    # Categorías
     parser.add_argument("--categories", type=str, help='CSV: "Corte,Transporte,..."')
     parser.add_argument("--categories-count", type=int, default=None)
     parser.add_argument("--forms-by-category", dest="forms_by_category", type=str)
@@ -663,21 +702,20 @@ def main():
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--emit-sql", type=str, default=None)
 
-    # Usuario/rol exclusivo
-    parser.add_argument("--create-user", action="store_true", help="Crea rol exclusivo y usuario, y asigna formularios a ese rol.")
-    parser.add_argument("--user-username", type=str, default=None)
-    parser.add_argument("--user-password", type=str, default=None, help="Si no se pasa, se genera una fuerte.")
+    # Usuario directo (sin roles)
+    parser.add_argument("--create-user", action="store_true", help="Crea usuario si no existe (con Argon2) y asigna todos los formularios a ese usuario.")
+    parser.add_argument("--assign-user", type=str, default=None, help="Nombre de usuario EXISTENTE al que asignar todos los formularios.")
     parser.add_argument("--user-name", type=str, default="Usuario Generado")
-    parser.add_argument("--user-phone", type=str, default="502-0000-0000")
     parser.add_argument("--user-email", type=str, default=None)
-    parser.add_argument("--user-role-name", type=str, default=None, help="Nombre opcional del rol exclusivo.")
-    parser.add_argument("--export-credentials", type=str, default=None, help="Ruta TXT para guardar usuario y contraseña en claro.")
+    parser.add_argument("--user-password", type=str, default=None, help="Si no se pasa, se genera una fuerte.")
+    parser.add_argument("--export-credentials", type=str, default=None, help="Ruta TXT para guardar usuario y contraseña en claro (si se crea).")
+    parser.add_argument("--public-if-no-user", action="store_true", help="Si no se crea/recibe usuario, marcar todos los formularios como públicos.")
 
     args = parser.parse_args()
     if args.seed is not None:
         random.seed(args.seed)
 
-    # Parse categorí­as explí­citas
+    # Parse categorías explícitas
     categories: Optional[List[str]] = None
     if args.categories:
         categories = [c.strip() for c in args.categories.split(",") if c.strip()]
@@ -686,18 +724,18 @@ def main():
     if args.forms_by_category:
         forms_by_category = _parse_forms_by_category_map(args.forms_by_category)
 
-    # Solo listar
+    # Solo listar categorías/plan
     if args.list_categories:
         if categories and len(categories) > 0:
             cat_names = categories
-            origin = "explí­citas (--categories)"
+            origin = "explícitas (--categories)"
         elif args.categories_count and args.categories_count > 0:
             cat_names = build_random_category_names(args.categories_count)
             origin = f"aleatorias (--categories-count={args.categories_count})"
         else:
             cat_names = ["Corte", "Transporte", "Mantenimiento", "Fertirriego", "Cosecha"]
             origin = "por defecto"
-        print(f"[INFO] Categorí­as previstas ({origin}): {', '.join(cat_names)}")
+        print(f"[INFO] Categorías previstas ({origin}): {', '.join(cat_names)}")
         if forms_by_category:
             total = sum(forms_by_category.values())
             print(f"[INFO] Distribución exacta (total {total}):")
@@ -705,9 +743,9 @@ def main():
                 print(f"  - {n}: {c}")
         elif args.forms_per_category is not None:
             total = len(cat_names) * args.forms_per_category
-            print(f"[INFO] {args.forms_per_category} formulario(s) por categorí­a. Total = {total}.")
+            print(f"[INFO] {args.forms_per_category} formulario(s) por categoría. Total = {total}.")
         elif args.min_forms_per_category is not None and args.max_forms_per_category is not None:
-            print(f"[INFO] Rango por categorí­a: [{args.min_forms_per_category}, {args.max_forms_per_category}].")
+            print(f"[INFO] Rango por categoría: [{args.min_forms_per_category}, {args.max_forms_per_category}].")
         else:
             print(f"[INFO] Reparto aleatorio global. Total formularios: {args.forms}")
         return
@@ -716,56 +754,38 @@ def main():
     if args.emit_sql:
         em = SqlEmitter(cnxn=None, emit_sql_path=args.emit_sql)
     else:
-        if not all([args.server, args.database, args.user, args.password]):
-            print("Faltan parámetros de conexión. Use --emit-sql o provea --server/--database/--user/--password.")
+        if not all([args.pg_host, args.pg_db, args.pg_user, args.pg_password]):
+            print("Faltan parámetros de conexión. Use --emit-sql o provea --pg-host/--pg-db/--pg-user/--pg-password.")
             sys.exit(1)
-        if pyodbc is None:
-            print("pyodbc no está instalado. Use --emit-sql o instale pyodbc.")
+        if psycopg2 is None:
+            print("psycopg2 no está instalado. Use --emit-sql o instale psycopg2.")
             sys.exit(1)
-        conn_str = (
-            f"DRIVER={args.driver};"
-            f"SERVER={args.server};"
-            f"DATABASE={args.database};"
-            f"UID={args.user};"
-            f"PWD={args.password};"
-            "TrustServerCertificate=yes;"
-        )
-        cnxn = pyodbc.connect(conn_str, autocommit=False)
+        conn_str = f"host={args.pg_host} port={args.pg_port} dbname={args.pg_db} user={args.pg_user} password={args.pg_password}"
+        cnxn = psycopg2.connect(conn_str)  # conexión típica de psycopg2
         em = SqlEmitter(cnxn=cnxn)
 
-    # --- Crear rol/usuario si se solicitó (antes de generar formularios para poder ligar) ---
-    role_id_for_run: Optional[str] = None
-    new_username: Optional[str] = None
-    new_plain_password: Optional[str] = None
+    # Flags de usuario
+    target_username: Optional[str] = args.assign_user
+    created_password: Optional[str] = None
 
     try:
+        # Si pidieron crear usuario, lo creamos (si no existe) y lo usamos como destino
         if args.create_user:
             if not _HAS_ARGON2:
                 raise RuntimeError("Para --create-user se requiere argon2-cffi. Instale: pip install argon2-cffi")
-            username = args.user_username if args.user_username else None
-            # Acepta --user-username o genera uno
-            if args.user_username:
-                username = args.user_username
-            else:
-                username = f"user_{RUN_PREFIX}"
-
-            # 1) rol exclusivo
-            role_id_for_run = create_role_exclusive(em, username, role_name=args.user_role_name)
-
-            # 2) usuario + relación
-            new_plain_password = args.user_password or random_password()
-            new_username, _pwd = create_user_with_role(
+            if not target_username:
+                target_username = f"user_{RUN_PREFIX}"
+            _, created_password = ensure_user_exists_or_create(
                 em,
-                username=username,
+                username=target_username,
                 name=args.user_name,
-                phone=args.user_phone,
-                email=args.user_email,
-                role_id=role_id_for_run,
-                plain_password=new_plain_password,
+                email=args.user_email or f"{target_username}@example.local",
+                plain_password=args.user_password,
+                export_credentials_path=args.export_credentials,
             )
 
-        # --- Generar formularios (y ligarlos al rol exclusivo si existe) ---
-        forms_created, cat_ids_by_name = generate(
+        # Generar formularios (si no hay usuario, forzar públicos si pidieron flag)
+        forms_created, _cat_map = generate(
             em,
             n_forms=args.forms,
             min_versions=args.min_versions,
@@ -780,38 +800,29 @@ def main():
             forms_per_category=args.forms_per_category,
             min_forms_per_category=args.min_forms_per_category,
             max_forms_per_category=args.max_forms_per_category,
-            role_for_run=role_id_for_run,
+            force_public_if_no_user=(target_username is None and args.public_if_no_user),
         )
 
-        # Exportar credenciales (si corresponde)
-        if args.create_user and args.export_credentials:
-            try:
-                lines = []
-                lines.append(f"# Credenciales generadas (corrida {RUN_PREFIX})\n")
-                lines.append(f"usuario: {new_username}")
-                lines.append(f"password: {new_plain_password}")
-                lines.append(f"rol_id: {role_id_for_run}")
-                lines.append(f"formularios_asignados: {len(forms_created)}")
-                if forms_created:
-                    lines.append("ids_formularios:")
-                    for fid in forms_created:
-                        lines.append(f"  - {fid}")
-                with open(args.export_credentials, "w", encoding="utf-8") as fh:
-                    fh.write("\n".join(lines) + "\n")
-                print(f"[OK] Credenciales exportadas a: {args.export_credentials}")
-            except Exception as ex:
-                print("[WARN] No se pudo escribir export-credentials:", ex)
+        # Asignación o publicación
+        if target_username:
+            assign_forms_to_user(em, target_username, forms_created)
+        elif args.public_if_no_user:
+            set_all_public(em, forms_created)
 
         # Commit / escribir SQL
         em.commit()
         if args.emit_sql:
             print(f"[OK] SQL generado en: {args.emit_sql}")
         else:
-            print("[OK] Inserciones realizadas.")
+            if target_username:
+                print(f"[OK] Inserciones realizadas y asignadas a usuario: {target_username}")
+                if created_password:
+                    print("[OK] Usuario creado. (password fue exportado si se indicó --export-credentials)")
+            else:
+                print("[OK] Inserciones realizadas. (formularios públicos)" if args.public_if_no_user else "[OK] Inserciones realizadas.")
 
     except Exception as e:
         if not args.emit_sql:
-            # rollback solo si hay conexión real
             try:
                 em.cnxn.rollback()  # type: ignore[attr-defined]
             except Exception:
@@ -819,14 +830,11 @@ def main():
         print("[ERROR]", e)
         raise
     finally:
-        # cerrar conexión si aplica
         if not args.emit_sql:
             try:
                 em.cnxn.close()  # type: ignore[attr-defined]
             except Exception:
                 pass
 
-
 if __name__ == "__main__":
     main()
-
