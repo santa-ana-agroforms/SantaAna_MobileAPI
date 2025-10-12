@@ -4,6 +4,9 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import type { AuthUser } from 'src/auth/types/auth.types';
 
+import type { CreateFormEntryDto } from './dto/create-entry.dto';
+import { ForbiddenException, BadRequestException } from '@nestjs/common';
+
 // Tipado del resultado plano (coincide con los alias del SELECT)
 export type FormFlatRow = {
   formulario_id: string;
@@ -247,6 +250,81 @@ ORDER BY categoria_nombre NULLS LAST, fp.secuencia, fpc.sequence NULLS LAST;`;
     if (flat.length === 0) return [];
     return this.groupFlatByCategory(flat);
   };
+
+  async createEntry(dto: CreateFormEntryDto, user: AuthUser) {
+    // 1) el usuario puede ver/usar ese form?
+    const canSql = `
+      SELECT 1
+      FROM formularios_formulario f
+      WHERE f.id = $1
+        AND (
+          f.es_publico = true
+          OR EXISTS (
+            SELECT 1
+            FROM formularios_user_formulario uf
+            WHERE uf.id_formulario_id = f.id
+              AND uf.id_usuario_id = $2
+          )
+        )
+      LIMIT 1;
+    `;
+    const can: {
+      length: number;
+    } = await this.dataSource.query(canSql, [dto.form_id, user.nombre_usuario]);
+    if (can.length === 0) {
+      throw new ForbiddenException('No tenés permiso para este formulario');
+    }
+
+    // 2) la versión pertenece al formulario?
+    const verSql = `
+      SELECT 1
+      FROM formularios_formularioindexversion
+      WHERE id_index_version = $1 AND formulario_id = $2
+      LIMIT 1;
+    `;
+    const ver: {
+      length: number;
+    } = await this.dataSource.query(verSql, [
+      dto.index_version_id,
+      dto.form_id,
+    ]);
+    if (ver.length === 0) {
+      throw new BadRequestException('index_version_id no pertenece a form_id');
+    }
+
+    // 3) insertar
+    const insSql = `
+      INSERT INTO formularios_entry (
+        id_usuario_id, form_id, form_name, index_version_id,
+        filled_at_local, status, fill_json, form_json
+      )
+      VALUES ($1, $2, $3, $4, $5::timestamptz, $6, $7::jsonb, $8::jsonb)
+      RETURNING id, created_at, updated_at;
+    `;
+    const params = [
+      user.nombre_usuario,
+      dto.form_id,
+      dto.form_name,
+      dto.index_version_id,
+      dto.filled_at_local,
+      dto.status,
+      JSON.stringify(dto.fill_json ?? {}),
+      JSON.stringify(dto.form_json ?? {}),
+    ];
+
+    const [row]: {
+      id: string;
+      created_at: Date;
+      updated_at: Date;
+      status: string;
+    }[] = await this.dataSource.query(insSql, params);
+    return {
+      id: row.id,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+      status: dto.status,
+    };
+  }
 
   // ===== Helpers de armado =====
 

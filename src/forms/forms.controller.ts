@@ -1,5 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-return */
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
 // src/forms/forms.controller.ts
 import {
   Controller,
@@ -12,6 +10,8 @@ import { FormsService } from './forms.service';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { AuthUser } from 'src/auth/decorators/auth-user.decorator';
 import type { TypeAuthUser } from 'src/auth/decorators/auth-user.decorator';
+import { Body, Post } from '@nestjs/common';
+import { CreateFormEntryDto } from './dto/create-entry.dto';
 
 @Controller('forms')
 @UseGuards(JwtAuthGuard)
@@ -38,5 +38,13 @@ export class FormsController {
       throw new NotFoundException(`Formulario ${id} no encontrado o sin datos`);
     }
     return tree;
+  }
+
+  @Post('entries')
+  async createEntry(
+    @Body() dto: CreateFormEntryDto,
+    @AuthUser() user: TypeAuthUser,
+  ) {
+    return this.service.createEntry(dto, user);
   }
 }
