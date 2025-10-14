@@ -38,6 +38,26 @@ export type FormFlatRow = {
   campo_requerido: boolean;
 };
 
+// ===== Tipos de retorno para datasets como tablas =====
+type DatasetTableRow = {
+  key: string | null;
+  label: string;
+  valor_raw: unknown;
+  extras: unknown;
+};
+
+export type DatasetTable = {
+  campo_id: string;
+  nombre_interno: string;
+  etiqueta: string;
+  fuente_id: string | null;
+  version: number | null;
+  columna: string | null;
+  mode: string | null; // 'pair' | 'list' | otros
+  total_items: number;
+  rows: DatasetTableRow[];
+};
+
 const parseJsonSafe = <T = unknown>(val: unknown): unknown => {
   if (val == null) return null;
   if (typeof val !== 'string') return val as T;
@@ -627,4 +647,283 @@ ORDER BY categoria_nombre NULLS LAST, fp.secuencia, fpc.sequence NULLS LAST;`;
     out.sort((a, b) => a.nombre_categoria.localeCompare(b.nombre_categoria));
     return out;
   }
+
+  /**
+   * Obtiene todos los datasets requeridos por los campos tipo "dataset"
+   * visibles para el usuario (formularios públicos o asignados) y los
+   * devuelve agrupados como “tablas” por campo.
+   *
+   * @param user  Usuario autenticado (para filtrar visibilidad)
+   * @param opts  Opcional: { formId?: string } para limitar a un formulario específico
+   */
+  getUserDatasetsAsTables = async (
+    user: AuthUser,
+    opts?: { formId?: string },
+  ): Promise<DatasetTable[]> => {
+    // ----------------------------
+    // 0) Detección de esquema real
+    // ----------------------------
+    const [versionTableReg]: Array<{ exists: boolean }> =
+      await this.dataSource.query(
+        `SELECT (to_regclass('public.formularios_fuente_datos_version') IS NOT NULL) AS exists;`,
+      );
+
+    const valorCols: Array<{ column_name: string }> =
+      await this.dataSource.query(
+        `
+    SELECT column_name
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name   = 'formularios_fuente_datos_valor';
+  `,
+      );
+
+    const colset = new Set(valorCols.map((c) => c.column_name));
+    const hasVersionId = colset.has('version_id'); // legacy
+    const hasFuenteId = colset.has('fuente_id'); // esquema nuevo típico
+    const hasVersion = colset.has('version'); // esquema nuevo con versionado “in-line”
+
+    // ----------------------------
+    // 1) WHERE de visibilidad
+    // ----------------------------
+    const params: any[] = [user.nombre_usuario];
+    const visibleWhereWithOptionalForm =
+      this.visibleForUserWhere + (opts?.formId ? ' AND f.id = $2 ' : '');
+    if (opts?.formId) params.push(opts.formId);
+
+    // ----------------------------
+    // 2) Bloque común (extraer cfg JSON)
+    // ----------------------------
+    const cteBase = `
+    WITH base AS (
+      ${this.baseCteSql}
+      ${visibleWhereWithOptionalForm}
+        AND (
+          LOWER(fc.tipo) = 'dataset'
+          OR LOWER(fc.clase) = 'dataset'
+        )
+    ),
+    dataset_fields AS (
+      SELECT
+        b.campo_id,
+        b.campo_nombre_interno  AS nombre_interno,
+        b.campo_etiqueta        AS etiqueta,
+        -- Normalizamos config a JSONB
+        COALESCE(NULLIF(b.campo_config::text, '')::jsonb, '{}'::jsonb) AS cfg_json
+      FROM base b
+    ),
+    dataset_parsed AS (
+      SELECT
+        df.campo_id,
+        df.nombre_interno,
+        df.etiqueta,
+        NULLIF(df.cfg_json->'dataset'->>'fuente_id','')::uuid           AS fuente_id,
+        NULLIF(df.cfg_json->'dataset'->>'version','')::int              AS version_conf,
+        df.cfg_json->'dataset'->>'column'                               AS columna_conf,
+        COALESCE(NULLIF(df.cfg_json->'dataset'->>'max_items_inline','')::int, 300) AS max_items,
+        df.cfg_json->'dataset'->>'mode'                                 AS mode
+      FROM dataset_fields df
+    )
+  `;
+
+    // ----------------------------
+    // 3) Construcción de SQL según esquema
+    // ----------------------------
+    let sql = '';
+    if (versionTableReg?.exists && hasVersionId) {
+      // ====== MODO A: esquema legacy con tabla de versiones ======
+      sql = `
+      ${cteBase},
+      version_resuelta AS (
+        SELECT
+          dp.*,
+          COALESCE(
+            dp.version_conf,
+            (SELECT MAX(v.version) FROM formularios_fuente_datos_version v WHERE v.fuente_id = dp.fuente_id)
+          ) AS version_resolved
+        FROM dataset_parsed dp
+        WHERE dp.fuente_id IS NOT NULL
+      ),
+      versiones AS (
+        SELECT
+          vr.campo_id,
+          vr.nombre_interno,
+          vr.etiqueta,
+          vr.fuente_id,
+          vr.version_resolved,
+          vr.columna_conf,
+          vr.max_items,
+          vr.mode,
+          v.id AS version_id
+        FROM version_resuelta vr
+        JOIN formularios_fuente_datos_version v
+          ON v.fuente_id = vr.fuente_id
+         AND v.version   = vr.version_resolved
+      ),
+      valores AS (
+        SELECT
+          ver.campo_id,
+          ver.nombre_interno,
+          ver.etiqueta,
+          ver.fuente_id,
+          ver.version_resolved,
+          ver.columna_conf,
+          ver.max_items,
+          ver.mode,
+          val.key_text,
+          val.label_text,
+          val.valor_raw,
+          val.extras,
+          ROW_NUMBER() OVER (PARTITION BY ver.campo_id ORDER BY val.label_text ASC) AS rn
+        FROM versiones ver
+        JOIN formularios_fuente_datos_valor val
+          ON val.version_id = ver.version_id
+         AND (ver.columna_conf IS NULL OR val.columna = ver.columna_conf)
+         AND (val.campo_id IS NULL OR val.campo_id = ver.campo_id)
+      )
+      SELECT
+        campo_id,
+        nombre_interno,
+        etiqueta,
+        fuente_id::text                    AS fuente_id,
+        version_resolved                   AS version,
+        columna_conf                       AS columna,
+        mode,
+        COUNT(*) FILTER (WHERE rn <= max_items) AS total_items,
+        JSONB_AGG(
+          JSONB_BUILD_OBJECT(
+            'key',       key_text,
+            'label',     label_text,
+            'valor_raw', valor_raw,
+            'extras',    extras
+          ) ORDER BY label_text ASC
+        ) FILTER (WHERE rn <= max_items) AS rows
+      FROM valores
+      GROUP BY
+        campo_id, nombre_interno, etiqueta, fuente_id, version_resolved, columna_conf, mode
+      ORDER BY nombre_interno ASC, campo_id ASC;
+    `;
+    } else {
+      // ====== MODO B: esquema nuevo (sin tabla de versiones) ======
+      // Opcionales según columnas presentes en *_valor
+      const joinByFuente = hasFuenteId
+        ? `AND val.fuente_id = dp.fuente_id`
+        : '';
+      // Si existe columna version en *_valor, podemos:
+      //   - respetar dp.version_conf cuando viene
+      //   - si NO viene, tomar la última por fuente/columna/campo
+      const extraCteLatest =
+        hasVersion && hasFuenteId
+          ? `,
+      latest_version AS (
+        SELECT
+          v.fuente_id,
+          v.columna,
+          v.campo_id,
+          MAX(v.version) AS max_version
+        FROM formularios_fuente_datos_valor v
+        GROUP BY v.fuente_id, v.columna, v.campo_id
+      )
+    `
+          : '';
+
+      const joinLatest =
+        hasVersion && hasFuenteId
+          ? `
+        LEFT JOIN latest_version lv
+          ON lv.fuente_id IS NOT DISTINCT FROM val.fuente_id
+         AND lv.columna   IS NOT DISTINCT FROM val.columna
+         AND lv.campo_id  IS NOT DISTINCT FROM val.campo_id
+      `
+          : '';
+
+      const versionPredicate = hasVersion
+        ? `
+        AND (
+          dp.version_conf IS NULL
+            ${hasFuenteId ? `AND (lv.max_version IS NULL OR val.version = lv.max_version)` : ''}
+          OR (dp.version_conf IS NOT NULL AND val.version = dp.version_conf)
+        )
+      `
+        : '';
+
+      sql = `
+      ${cteBase}
+      ${extraCteLatest}
+      , valores AS (
+        SELECT
+          dp.campo_id,
+          dp.nombre_interno,
+          dp.etiqueta,
+          dp.fuente_id,
+          COALESCE(dp.version_conf, NULL)::int AS version_resolved,
+          dp.columna_conf,
+          dp.max_items,
+          dp.mode,
+          val.key_text,
+          val.label_text,
+          val.valor_raw,
+          val.extras,
+          ROW_NUMBER() OVER (PARTITION BY dp.campo_id ORDER BY val.label_text ASC) AS rn
+        FROM dataset_parsed dp
+        JOIN formularios_fuente_datos_valor val
+          ON (dp.fuente_id IS NULL OR ${hasFuenteId ? 'val.fuente_id = dp.fuente_id' : 'TRUE'})
+         AND (dp.columna_conf IS NULL OR val.columna = dp.columna_conf)
+         AND (val.campo_id IS NULL OR val.campo_id = dp.campo_id)
+         ${joinByFuente}
+         ${versionPredicate}
+        ${joinLatest}
+      )
+      SELECT
+        campo_id,
+        nombre_interno,
+        etiqueta,
+        ${hasFuenteId ? 'fuente_id::text' : 'NULL::text'} AS fuente_id,
+        version_resolved                                   AS version,
+        columna_conf                                       AS columna,
+        mode,
+        COUNT(*) FILTER (WHERE rn <= max_items) AS total_items,
+        JSONB_AGG(
+          JSONB_BUILD_OBJECT(
+            'key',       key_text,
+            'label',     label_text,
+            'valor_raw', valor_raw,
+            'extras',    extras
+          ) ORDER BY label_text ASC
+        ) FILTER (WHERE rn <= max_items) AS rows
+      FROM valores
+      GROUP BY
+        campo_id, nombre_interno, etiqueta, ${hasFuenteId ? 'fuente_id,' : ''} version_resolved, columna_conf, mode
+      ORDER BY nombre_interno ASC, campo_id ASC;
+    `;
+    }
+
+    // ----------------------------
+    // 4) Ejecutar y normalizar
+    // ----------------------------
+    const raw = await this.dataSource.query(sql, params);
+
+    const out: DatasetTable[] = raw.map((r: any) => {
+      const rows =
+        typeof r.rows === 'string'
+          ? (JSON.parse(r.rows) as DatasetTableRow[])
+          : ((r.rows as DatasetTableRow[]) ?? []);
+      return {
+        campo_id: r.campo_id,
+        nombre_interno: r.nombre_interno,
+        etiqueta: r.etiqueta,
+        fuente_id: r.fuente_id ?? null,
+        version:
+          r.version !== null && r.version !== undefined
+            ? Number(r.version)
+            : null,
+        columna: r.columna ?? null,
+        mode: r.mode ?? null,
+        total_items: Number(r.total_items ?? rows.length),
+        rows,
+      };
+    });
+
+    return out;
+  };
 }

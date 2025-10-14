@@ -5,12 +5,14 @@ import {
   Param,
   NotFoundException,
   UseGuards,
+  Body,
+  Post,
+  Query,
 } from '@nestjs/common';
 import { FormsService } from './forms.service';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { AuthUser } from 'src/auth/decorators/auth-user.decorator';
 import type { TypeAuthUser } from 'src/auth/decorators/auth-user.decorator';
-import { Body, Post } from '@nestjs/common';
 import { CreateFormEntryDto } from './dto/create-entry.dto';
 
 @Controller('forms')
@@ -18,7 +20,7 @@ import { CreateFormEntryDto } from './dto/create-entry.dto';
 export class FormsController {
   constructor(private readonly service: FormsService) {}
 
-  // ---- TREE: todos los formularios en estructura jerárquica (filtrado por roles del usuario)
+  // ---- TREE: todos los formularios agrupados por categoría (filtrado por roles del usuario)
   // GET /forms/tree
   @Get('tree')
   async getFormsTreeAll(@AuthUser() user: TypeAuthUser) {
@@ -40,11 +42,46 @@ export class FormsController {
     return tree;
   }
 
+  // ---- ENTRIES: crear envío de formulario
+  // POST /forms/entries
   @Post('entries')
   async createEntry(
     @Body() dto: CreateFormEntryDto,
     @AuthUser() user: TypeAuthUser,
   ) {
     return this.service.createEntry(dto, user);
+  }
+
+  // ---- DATASETS: TODOS los datasets visibles para el usuario
+  // GET /forms/datasets
+  @Get('datasets')
+  async getUserDatasets(@AuthUser() user: TypeAuthUser) {
+    return this.service.getUserDatasetsAsTables(user);
+  }
+
+  // ---- DATASETS: datasets de un formulario específico (filtrado por roles del usuario)
+  // GET /forms/:id/datasets?notFoundWhenEmpty=true|false
+  @Get(':id/datasets')
+  async getUserDatasetsByForm(
+    @Param('id') id: string,
+    @AuthUser() user: TypeAuthUser,
+    @Query('notFoundWhenEmpty') notFoundWhenEmpty = 'false',
+  ) {
+    const tables = await this.service.getUserDatasetsAsTables(user, {
+      formId: id,
+    });
+
+    // Podés exigir 404 si viene vacío para depurar por qué no aparece el dataset
+    const require404 =
+      String(notFoundWhenEmpty).toLowerCase() === 'true' ||
+      notFoundWhenEmpty === '1';
+
+    if (require404 && tables.length === 0) {
+      throw new NotFoundException(
+        `Sin datasets visibles para el formulario ${id} (verifica visibilidad, campos tipo "dataset" y versión/fuente configuradas).`,
+      );
+    }
+
+    return tables;
   }
 }
