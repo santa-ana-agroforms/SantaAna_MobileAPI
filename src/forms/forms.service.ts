@@ -16,6 +16,11 @@ export type FormFlatRow = {
   formulario_index_version_id: string;
   formulario_index_version_fecha: Date;
 
+  // Metadatos de periodicidad y disponibilidad del formulario
+  formulario_periodicidad: number | null;
+  formulario_disponible_desde: Date | null;
+  formulario_disponible_hasta: Date | null;
+
   // Categoría
   categoria_id: string | null;
   categoria_nombre: string | null;
@@ -96,118 +101,123 @@ const toBool = (v: unknown): boolean => {
 export class FormsService {
   constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
 
+  // Constante para "hoy" en Guatemala (solo fecha)
+  private readonly todayGT = `(now() at time zone 'America/Guatemala')::date`;
+
   // ---------------------------------------------
   // SQL base (CTE) para Postgres — NUEVA ESTRUCTURA
-  // - Usa formularios_formularios_index_version + formularios_formularioindexversion
-  //   para resolver la ÚLTIMA versión de formulario por fecha_creacion.
-  // - Vincula páginas a la versión por formularios_pagina_index_version.
-  // - Toma la última versión de cada página desde formularios_pagina_version (por fecha).
   // ---------------------------------------------
   private readonly baseCteSql = `
-WITH ultima_version_form AS (
-  SELECT
-    ffiv.id_formulario                         AS formulario_id,
-    MAX(ff.fecha_creacion)                     AS fecha_max
-  FROM formularios_formularios_index_version AS ffiv
-  JOIN formularios_formularioindexversion     AS ff
-    ON ff.id_index_version = ffiv.id_index_version
-  GROUP BY ffiv.id_formulario
-),
-version_vigente AS (
-  SELECT
-    ffiv.id_formulario       AS formulario_id,
-    ff.id_index_version      AS formulario_index_version_id,
-    ff.fecha_creacion        AS formulario_index_version_fecha
-  FROM ultima_version_form uv
-  JOIN formularios_formularios_index_version ffiv
-    ON ffiv.id_formulario = uv.formulario_id
-  JOIN formularios_formularioindexversion ff
-    ON ff.id_index_version = ffiv.id_index_version
-   AND ff.fecha_creacion = uv.fecha_max
-),
-paginas_de_version AS (
-  SELECT
-    fpiv.id_index_version,
-    fpiv.id_pagina,
-    fp.secuencia,
-    fp.nombre,
-    fp.descripcion
-  FROM formularios_pagina_index_version fpiv
-  JOIN formularios_pagina fp
-    ON fp.id_pagina = fpiv.id_pagina
-),
-ult_version_pagina AS (
-  -- última versión (fecha) por id_pagina (UUID)
-  SELECT
-    pv.id_pagina,
-    MAX(pv.fecha_creacion) AS fecha_max
-  FROM formularios_pagina_version pv
-  GROUP BY pv.id_pagina
-)
-SELECT
-  f.id                                        AS formulario_id,
-  f.nombre                                    AS formulario_nombre,
-  v.formulario_index_version_id               AS formulario_index_version_id,
-  v.formulario_index_version_fecha            AS formulario_index_version_fecha,
+ WITH ultima_version_form AS (
+   SELECT
+     ffiv.id_formulario                         AS formulario_id,
+     MAX(ff.fecha_creacion)                     AS fecha_max
+   FROM formularios_formularios_index_version AS ffiv
+   JOIN formularios_formularioindexversion     AS ff
+     ON ff.id_index_version = ffiv.id_index_version
+   GROUP BY ffiv.id_formulario
+ ),
+ version_vigente AS (
+   SELECT
+     ffiv.id_formulario       AS formulario_id,
+     ff.id_index_version      AS formulario_index_version_id,
+     ff.fecha_creacion        AS formulario_index_version_fecha
+   FROM ultima_version_form uv
+   JOIN formularios_formularios_index_version ffiv
+     ON ffiv.id_formulario = uv.formulario_id
+   JOIN formularios_formularioindexversion ff
+     ON ff.id_index_version = ffiv.id_index_version
+    AND ff.fecha_creacion = uv.fecha_max
+ ),
+ paginas_de_version AS (
+   SELECT
+     fpiv.id_index_version,
+     fpiv.id_pagina,
+     fp.secuencia,
+     fp.nombre,
+     fp.descripcion
+   FROM formularios_pagina_index_version fpiv
+   JOIN formularios_pagina fp
+     ON fp.id_pagina = fpiv.id_pagina
+ ),
+ ult_version_pagina AS (
+   SELECT
+     pv.id_pagina,
+     MAX(pv.fecha_creacion) AS fecha_max
+   FROM formularios_pagina_version pv
+   GROUP BY pv.id_pagina
+ )
+ SELECT
+   f.id                                        AS formulario_id,
+   f.nombre                                    AS formulario_nombre,
+   v.formulario_index_version_id               AS formulario_index_version_id,
+   v.formulario_index_version_fecha            AS formulario_index_version_fecha,
 
-  cat.id                                      AS categoria_id,
-  cat.nombre                                  AS categoria_nombre,
-  cat.descripcion                             AS categoria_descripcion,
+   -- Periodicidad (INTEGER) y ventana de disponibilidad (fechas)
+   f.periodicidad                              AS formulario_periodicidad,
+   f.disponible_desde_fecha                    AS formulario_disponible_desde,
+   f.disponible_hasta_fecha                    AS formulario_disponible_hasta,
 
-  pdv.id_pagina                               AS pagina_id,
-  pdv.secuencia                               AS pagina_secuencia,
-  pdv.nombre                                  AS pagina_nombre,
-  pdv.descripcion                             AS pagina_descripcion,
+   cat.id                                      AS categoria_id,
+   cat.nombre                                  AS categoria_nombre,
+   cat.descripcion                             AS categoria_descripcion,
 
-  fpv.id_pagina_version                       AS pagina_version_id,
-  fpv.fecha_creacion                          AS pagina_version_fecha,
+   pdv.id_pagina                               AS pagina_id,
+   pdv.secuencia                               AS pagina_secuencia,
+   pdv.nombre                                  AS pagina_nombre,
+   pdv.descripcion                             AS pagina_descripcion,
 
-  fc.id_campo                                 AS campo_id,
-  fpc.sequence                                AS campo_sequence,
-  fc.tipo                                     AS campo_tipo,
-  fc.clase                                    AS campo_clase,
-  fc.nombre_campo                             AS campo_nombre_interno,
-  fc.etiqueta                                 AS campo_etiqueta,
-  fc.ayuda                                    AS campo_ayuda,
-  fc.config                                   AS campo_config,
-  COALESCE(fc.requerido, false)               AS campo_requerido
-FROM formularios_formulario f
-JOIN version_vigente v
-  ON v.formulario_id = f.id
-LEFT JOIN formularios_categoria cat
-  ON cat.id = f.categoria_id
-JOIN paginas_de_version pdv
-  ON pdv.id_index_version = v.formulario_index_version_id
-JOIN ult_version_pagina uvp
-  ON uvp.id_pagina = pdv.id_pagina
-JOIN formularios_pagina_version fpv
-  ON fpv.id_pagina = pdv.id_pagina
- AND fpv.fecha_creacion = uvp.fecha_max
-JOIN formularios_pagina_campo fpc
-  ON fpc.id_pagina_version = fpv.id_pagina_version
-JOIN formularios_campo fc
-  ON fc.id_campo = fpc.id_campo
+   fpv.id_pagina_version                       AS pagina_version_id,
+   fpv.fecha_creacion                          AS pagina_version_fecha,
+
+   fc.id_campo                                 AS campo_id,
+   fpc.sequence                                AS campo_sequence,
+   fc.tipo                                     AS campo_tipo,
+   fc.clase                                    AS campo_clase,
+   fc.nombre_campo                             AS campo_nombre_interno,
+   fc.etiqueta                                 AS campo_etiqueta,
+   fc.ayuda                                    AS campo_ayuda,
+   fc.config                                   AS campo_config,
+   COALESCE(fc.requerido, false)               AS campo_requerido
+ FROM formularios_formulario f
+ JOIN version_vigente v
+   ON v.formulario_id = f.id
+ LEFT JOIN formularios_categoria cat
+   ON cat.id = f.categoria_id
+ JOIN paginas_de_version pdv
+   ON pdv.id_index_version = v.formulario_index_version_id
+ JOIN ult_version_pagina uvp
+   ON uvp.id_pagina = pdv.id_pagina
+ JOIN formularios_pagina_version fpv
+   ON fpv.id_pagina = pdv.id_pagina
+  AND fpv.fecha_creacion = uvp.fecha_max
+ JOIN formularios_pagina_campo fpc
+   ON fpc.id_pagina_version = fpv.id_pagina_version
+ JOIN formularios_campo fc
+   ON fc.id_campo = fpc.id_campo
 `;
 
   // WHERE de visibilidad (público o asignado por tabla usuario↔formulario)
-  // ⚠️ Casts explícitos a ::text para tolerar esquemas donde id_formulario_id sea TEXT o UUID.
+  // y DISPONIBILIDAD por fechas con la fecha local de Guatemala.
   private readonly visibleForUserWhere = `
-WHERE (f.es_publico = true)
-   OR EXISTS (
-        SELECT 1
-        FROM formularios_user_formulario uf
-        WHERE uf.id_usuario_id::text = $1::text
-          AND uf.id_formulario_id::text = f.id::text
+ WHERE (
+        f.es_publico = true
+        OR EXISTS (
+          SELECT 1
+          FROM formularios_user_formulario uf
+          WHERE uf.id_usuario_id::text = $1::text
+            AND uf.id_formulario_id::text = f.id::text
+        )
       )
+  AND f.disponible_desde_fecha <= ${this.todayGT}
+  AND f.disponible_hasta_fecha >= ${this.todayGT}
 `;
 
   // ---------------------------------------------
-  // PLANO: todos los formularios (filtrado por usuario)
+  // PLANO: todos los formularios (filtrado por usuario + disponibilidad)
   // ---------------------------------------------
   getFormsFlatAll = async (user: AuthUser): Promise<FormFlatRow[]> => {
-    const sql = `${this.baseCteSql}
-${this.visibleForUserWhere}
-ORDER BY categoria_nombre NULLS LAST, pagina_secuencia, campo_sequence NULLS LAST;`;
+    const sql = `${this.baseCteSql} ${this.visibleForUserWhere} ORDER BY categoria_nombre NULLS LAST, pagina_secuencia, campo_sequence NULLS LAST;`;
     const rows: FormFlatRow[] = await this.dataSource.query(sql, [
       user.nombre_usuario,
     ]);
@@ -215,26 +225,25 @@ ORDER BY categoria_nombre NULLS LAST, pagina_secuencia, campo_sequence NULLS LAS
   };
 
   // ---------------------------------------------
-  // PLANO: un formulario por ID (sin filtro)
+  // PLANO: un formulario por ID (sin filtro de usuario ni disponibilidad)
+  // (útil para administración u obtener metadatos aunque esté fuera de ventana)
   // ---------------------------------------------
   getFormFlatById = async (formId: string): Promise<FormFlatRow[]> => {
-    const sql = `${this.baseCteSql}
-WHERE f.id = $1::uuid
-ORDER BY categoria_nombre NULLS LAST, pagina_secuencia, campo_sequence NULLS LAST;`;
+    const sql = `${this.baseCteSql} WHERE f.id = $1::uuid ORDER BY categoria_nombre NULLS LAST, pagina_secuencia, campo_sequence NULLS LAST;`;
     const rows: FormFlatRow[] = await this.dataSource.query(sql, [formId]);
     return rows;
   };
 
   // ---------------------------------------------
-  // PLANO: un formulario por ID (filtrado por usuario)
+  // PLANO: un formulario por ID (filtrado por usuario + disponibilidad)
   // ---------------------------------------------
   getFormFlatByIdForUser = async (
     formId: string,
     user: AuthUser,
   ): Promise<FormFlatRow[]> => {
     const sql = `${this.baseCteSql}
-WHERE f.id = $1::uuid
-  AND (
+ WHERE f.id = $1::uuid
+   AND (
         f.es_publico = true
      OR EXISTS (
           SELECT 1
@@ -242,8 +251,11 @@ WHERE f.id = $1::uuid
           WHERE uf.id_usuario_id::text = $2::text
             AND uf.id_formulario_id::text = f.id::text
         )
-  )
-ORDER BY categoria_nombre NULLS LAST, pagina_secuencia, campo_sequence NULLS LAST;`;
+   )
+   AND f.disponible_desde_fecha <= ${this.todayGT}
+   AND f.disponible_hasta_fecha >= ${this.todayGT}
+ ORDER BY categoria_nombre NULLS LAST, pagina_secuencia, campo_sequence NULLS LAST;`;
+
     const rows: FormFlatRow[] = await this.dataSource.query(sql, [
       formId,
       user.nombre_usuario,
@@ -262,7 +274,7 @@ ORDER BY categoria_nombre NULLS LAST, pagina_secuencia, campo_sequence NULLS LAS
   };
 
   // ---------------------------------------------
-  // ÁRBOL: un formulario (filtrado por usuario)
+  // ÁRBOL: un formulario (filtrado por usuario + disponibilidad)
   // ---------------------------------------------
   getFormTreeByIdForUser = async (formId: string, user: AuthUser) => {
     const flat = await this.getFormFlatByIdForUser(formId, user);
@@ -271,7 +283,7 @@ ORDER BY categoria_nombre NULLS LAST, pagina_secuencia, campo_sequence NULLS LAS
   };
 
   // ---------------------------------------------
-  // ÁRBOL: todos los formularios (filtrado por usuario)
+  // ÁRBOL: todos los formularios (filtrado por usuario + disponibilidad)
   // ---------------------------------------------
   getFormsTreeAll = async (user: AuthUser) => {
     const flat = await this.getFormsFlatAll(user);
@@ -280,7 +292,7 @@ ORDER BY categoria_nombre NULLS LAST, pagina_secuencia, campo_sequence NULLS LAS
   };
 
   // ---------------------------------------------
-  // Árbol agrupado por categoría (filtrado por usuario)
+  // Árbol agrupado por categoría (filtrado por usuario + disponibilidad)
   // ---------------------------------------------
   getFormsTreeAllByCategory = async (user: AuthUser) => {
     const flat = await this.getFormsFlatAll(user);
@@ -289,7 +301,7 @@ ORDER BY categoria_nombre NULLS LAST, pagina_secuencia, campo_sequence NULLS LAS
   };
 
   async createEntry(dto: CreateFormEntryDto, user: AuthUser) {
-    // 1) el usuario puede ver/usar ese form?
+    // 1) el usuario puede ver/usar ese form? (y debe estar disponible hoy en Guatemala)
     const canSql = `
       SELECT 1
       FROM formularios_formulario f
@@ -303,6 +315,8 @@ ORDER BY categoria_nombre NULLS LAST, pagina_secuencia, campo_sequence NULLS LAS
               AND uf.id_usuario_id::text    = $2::text
           )
         )
+        AND f.disponible_desde_fecha <= ${this.todayGT}
+        AND f.disponible_hasta_fecha >= ${this.todayGT}
       LIMIT 1;
     `;
     const can: { length: number } = await this.dataSource.query(canSql, [
@@ -310,7 +324,9 @@ ORDER BY categoria_nombre NULLS LAST, pagina_secuencia, campo_sequence NULLS LAS
       user.nombre_usuario,
     ]);
     if (can.length === 0) {
-      throw new ForbiddenException('No tenés permiso para este formulario');
+      throw new ForbiddenException(
+        'No tenés permiso o el formulario no está disponible hoy',
+      );
     }
 
     // 2) la versión pertenece al formulario? (ahora por tabla puente)
@@ -329,13 +345,17 @@ ORDER BY categoria_nombre NULLS LAST, pagina_secuencia, campo_sequence NULLS LAS
       throw new BadRequestException('index_version_id no pertenece a form_id');
     }
 
-    // 3) insertar
+    // 3) insertar (si no mandan filled_at_local, usamos "ahora" de Guatemala)
     const insSql = `
       INSERT INTO formularios_entry (
         id_usuario_id, form_id, form_name, index_version_id,
         filled_at_local, status, fill_json, form_json
       )
-      VALUES ($1, $2::uuid, $3, $4::uuid, $5::timestamptz, $6, $7::jsonb, $8::jsonb)
+      VALUES (
+        $1, $2::uuid, $3, $4::uuid,
+        COALESCE($5::timestamptz, (now() at time zone 'America/Guatemala')),
+        $6, $7::jsonb, $8::jsonb
+      )
       RETURNING id, created_at, updated_at;
     `;
     const params = [
@@ -343,7 +363,7 @@ ORDER BY categoria_nombre NULLS LAST, pagina_secuencia, campo_sequence NULLS LAS
       dto.form_id,
       dto.form_name,
       dto.index_version_id,
-      dto.filled_at_local,
+      dto.filled_at_local ?? null,
       dto.status,
       JSON.stringify(dto.fill_json ?? {}),
       JSON.stringify(dto.form_json ?? {}),
@@ -441,6 +461,11 @@ ORDER BY categoria_nombre NULLS LAST, pagina_secuencia, campo_sequence NULLS LAS
         id_index_version: base.formulario_index_version_id,
         fecha_creacion: base.formulario_index_version_fecha,
       },
+      periodicidad: base.formulario_periodicidad ?? null,
+      disponibilidad: {
+        desde: base.formulario_disponible_desde ?? null,
+        hasta: base.formulario_disponible_hasta ?? null,
+      },
       paginas,
     };
   }
@@ -469,6 +494,8 @@ ORDER BY categoria_nombre NULLS LAST, pagina_secuencia, campo_sequence NULLS LAS
       id_formulario: string;
       nombre: string;
       version_vigente: { id_index_version: string; fecha_creacion: Date };
+      periodicidad: number | null;
+      disponibilidad: { desde: Date | null; hasta: Date | null };
       paginasMap: Map<string, PaginaNode>;
     };
 
@@ -482,6 +509,11 @@ ORDER BY categoria_nombre NULLS LAST, pagina_secuencia, campo_sequence NULLS LAS
           version_vigente: {
             id_index_version: r.formulario_index_version_id,
             fecha_creacion: r.formulario_index_version_fecha,
+          },
+          periodicidad: r.formulario_periodicidad ?? null,
+          disponibilidad: {
+            desde: r.formulario_disponible_desde ?? null,
+            hasta: r.formulario_disponible_hasta ?? null,
           },
           paginasMap: new Map<string, PaginaNode>(),
         });
@@ -533,6 +565,8 @@ ORDER BY categoria_nombre NULLS LAST, pagina_secuencia, campo_sequence NULLS LAS
         id_formulario: f.id_formulario,
         nombre: f.nombre,
         version_vigente: f.version_vigente,
+        periodicidad: f.periodicidad,
+        disponibilidad: f.disponibilidad,
         paginas,
       };
     });
@@ -566,6 +600,8 @@ ORDER BY categoria_nombre NULLS LAST, pagina_secuencia, campo_sequence NULLS LAS
       id_formulario: string;
       nombre: string;
       version_vigente: { id_index_version: string; fecha_creacion: Date };
+      periodicidad: number | null;
+      disponibilidad: { desde: Date | null; hasta: Date | null };
       paginasMap: Map<string, PaginaNode>;
     };
     type CatNode = {
@@ -597,6 +633,11 @@ ORDER BY categoria_nombre NULLS LAST, pagina_secuencia, campo_sequence NULLS LAS
           version_vigente: {
             id_index_version: r.formulario_index_version_id,
             fecha_creacion: r.formulario_index_version_fecha,
+          },
+          periodicidad: r.formulario_periodicidad ?? null,
+          disponibilidad: {
+            desde: r.formulario_disponible_desde ?? null,
+            hasta: r.formulario_disponible_hasta ?? null,
           },
           paginasMap: new Map<string, PaginaNode>(),
         });
@@ -648,6 +689,8 @@ ORDER BY categoria_nombre NULLS LAST, pagina_secuencia, campo_sequence NULLS LAS
           id_formulario: f.id_formulario,
           nombre: f.nombre,
           version_vigente: f.version_vigente,
+          periodicidad: f.periodicidad,
+          disponibilidad: f.disponibilidad,
           paginas,
         };
       });
@@ -669,17 +712,12 @@ ORDER BY categoria_nombre NULLS LAST, pagina_secuencia, campo_sequence NULLS LAS
    * Obtiene todos los datasets requeridos por los campos tipo "dataset"
    * visibles para el usuario (formularios públicos o asignados) y los
    * devuelve agrupados como “tablas” por campo.
-   *
-   * @param user  Usuario autenticado (para filtrar visibilidad)
-   * @param opts  Opcional: { formId?: string } para limitar a un formulario específico
    */
   getUserDatasetsAsTables = async (
     user: AuthUser,
     opts?: { formId?: string },
   ): Promise<DatasetTable[]> => {
-    // ----------------------------
     // 0) Detección de esquema real
-    // ----------------------------
     const [versionTableReg]: Array<{ exists: boolean }> =
       await this.dataSource.query(
         `SELECT (to_regclass('public.formularios_fuente_datos_version') IS NOT NULL) AS exists;`,
@@ -700,17 +738,13 @@ ORDER BY categoria_nombre NULLS LAST, pagina_secuencia, campo_sequence NULLS LAS
     const hasFuenteId = colset.has('fuente_id'); // esquema actual
     const hasVersion = colset.has('version'); // si el valor trae version in-line
 
-    // ----------------------------
-    // 1) WHERE de visibilidad
-    // ----------------------------
+    // 1) WHERE de visibilidad + disponibilidad (y opcional por form)
     const params: any[] = [user.nombre_usuario];
     const visibleWhereWithOptionalForm =
       this.visibleForUserWhere + (opts?.formId ? ' AND f.id = $2::uuid ' : '');
     if (opts?.formId) params.push(opts.formId);
 
-    // ----------------------------
     // 2) Bloque común (extraer cfg JSON)
-    // ----------------------------
     const cteBase = `
     WITH base AS (
       ${this.baseCteSql}
@@ -725,7 +759,6 @@ ORDER BY categoria_nombre NULLS LAST, pagina_secuencia, campo_sequence NULLS LAS
         b.campo_id,
         b.campo_nombre_interno  AS nombre_interno,
         b.campo_etiqueta        AS etiqueta,
-        -- Normalizamos config a JSONB
         COALESCE(NULLIF(b.campo_config::text, '')::jsonb, '{}'::jsonb) AS cfg_json
       FROM base b
     ),
@@ -734,18 +767,16 @@ ORDER BY categoria_nombre NULLS LAST, pagina_secuencia, campo_sequence NULLS LAS
         df.campo_id,
         df.nombre_interno,
         df.etiqueta,
-        NULLIF(df.cfg_json->'dataset'->>'fuente_id','')::uuid           AS fuente_id,
-        NULLIF(df.cfg_json->'dataset'->>'version','')::int              AS version_conf,
-        df.cfg_json->'dataset'->>'column'                               AS columna_conf,
+        NULLIF(df.cfg_json->'dataset'->>'fuente_id','')::uuid              AS fuente_id,
+        NULLIF(df.cfg_json->'dataset'->>'version','')::int                  AS version_conf,
+        df.cfg_json->'dataset'->>'column'                                   AS columna_conf,
         COALESCE(NULLIF(df.cfg_json->'dataset'->>'max_items_inline','')::int, 300) AS max_items,
-        df.cfg_json->'dataset'->>'mode'                                 AS mode
+        df.cfg_json->'dataset'->>'mode'                                     AS mode
       FROM dataset_fields df
     )
   `;
 
-    // ----------------------------
     // 3) Construcción de SQL según esquema
-    // ----------------------------
     let sql = '';
     if (versionTableReg?.exists && hasVersionId) {
       // ====== MODO A: esquema legacy con tabla de versiones ======
@@ -907,10 +938,7 @@ ORDER BY categoria_nombre NULLS LAST, pagina_secuencia, campo_sequence NULLS LAS
     `;
     }
 
-    // ----------------------------
     // 4) Ejecutar y normalizar
-    // ----------------------------
-
     const raw: DatasetRaw[] = await this.dataSource.query(sql, params);
 
     const out: DatasetTable[] = raw.map((r: DatasetRaw) => {
