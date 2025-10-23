@@ -1,11 +1,13 @@
 // src/forms/forms.service.ts
-import { Injectable } from '@nestjs/common';
+import {
+  Injectable,
+  ForbiddenException,
+  BadRequestException,
+} from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import type { AuthUser } from 'src/auth/types/auth.types';
-
 import type { CreateFormEntryDto } from './dto/create-entry.dto';
-import { ForbiddenException, BadRequestException } from '@nestjs/common';
 
 // Tipado del resultado plano (coincide con los alias del SELECT)
 export type FormFlatRow = {
@@ -58,6 +60,18 @@ export type DatasetTable = {
   rows: DatasetTableRow[];
 };
 
+export type DatasetRaw = {
+  campo_id: string;
+  nombre_interno: string;
+  etiqueta: string;
+  fuente_id: string | null;
+  version: number | null;
+  columna: string | null;
+  mode: string | null; // 'pair' | 'list' | otros
+  total_items: number;
+  rows: string; // JSON stringificado
+};
+
 const parseJsonSafe = <T = unknown>(val: unknown): unknown => {
   if (val == null) return null;
   if (typeof val !== 'string') return val as T;
@@ -83,10 +97,11 @@ export class FormsService {
   constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
 
   // ---------------------------------------------
-  // SQL base (CTE) para Postgres
+  // SQL base (CTE) para Postgres — NUEVA ESTRUCTURA
   // - Usa formularios_formularios_index_version + formularios_formularioindexversion
   //   para resolver la ÚLTIMA versión de formulario por fecha_creacion.
-  // - Mapea uuid de pagina a varchar(32) (sin guiones) para vincular pagina_version.
+  // - Vincula páginas a la versión por formularios_pagina_index_version.
+  // - Toma la última versión de cada página desde formularios_pagina_version (por fecha).
   // ---------------------------------------------
   private readonly baseCteSql = `
 WITH ultima_version_form AS (
@@ -110,21 +125,24 @@ version_vigente AS (
     ON ff.id_index_version = ffiv.id_index_version
    AND ff.fecha_creacion = uv.fecha_max
 ),
-paginas_uuid_map AS (
+paginas_de_version AS (
   SELECT
-    fp.id_pagina                                  AS pagina_id_uuid,
-    REPLACE(fp.id_pagina::text, '-', '')          AS pagina_id_32
-  FROM formularios_pagina fp
+    fpiv.id_index_version,
+    fpiv.id_pagina,
+    fp.secuencia,
+    fp.nombre,
+    fp.descripcion
+  FROM formularios_pagina_index_version fpiv
+  JOIN formularios_pagina fp
+    ON fp.id_pagina = fpiv.id_pagina
 ),
 ult_version_pagina AS (
-  -- última versión (fecha) por "id_pagina" de 32 caracteres
+  -- última versión (fecha) por id_pagina (UUID)
   SELECT
-    p.pagina_id_uuid,
-    MAX(fpv.fecha_creacion) AS fecha_max
-  FROM formularios_pagina_version fpv
-  JOIN paginas_uuid_map p
-    ON p.pagina_id_32 = fpv.id_pagina
-  GROUP BY p.pagina_id_uuid
+    pv.id_pagina,
+    MAX(pv.fecha_creacion) AS fecha_max
+  FROM formularios_pagina_version pv
+  GROUP BY pv.id_pagina
 )
 SELECT
   f.id                                        AS formulario_id,
@@ -136,10 +154,10 @@ SELECT
   cat.nombre                                  AS categoria_nombre,
   cat.descripcion                             AS categoria_descripcion,
 
-  fp.id_pagina                                AS pagina_id,
-  fp.secuencia                                AS pagina_secuencia,
-  fp.nombre                                   AS pagina_nombre,
-  fp.descripcion                              AS pagina_descripcion,
+  pdv.id_pagina                               AS pagina_id,
+  pdv.secuencia                               AS pagina_secuencia,
+  pdv.nombre                                  AS pagina_nombre,
+  pdv.descripcion                             AS pagina_descripcion,
 
   fpv.id_pagina_version                       AS pagina_version_id,
   fpv.fecha_creacion                          AS pagina_version_fecha,
@@ -158,14 +176,12 @@ JOIN version_vigente v
   ON v.formulario_id = f.id
 LEFT JOIN formularios_categoria cat
   ON cat.id = f.categoria_id
-JOIN formularios_pagina_index_version fpiv
-  ON fpiv.id_index_version = v.formulario_index_version_id
-JOIN formularios_pagina fp
-  ON fp.id_pagina = fpiv.id_pagina
+JOIN paginas_de_version pdv
+  ON pdv.id_index_version = v.formulario_index_version_id
 JOIN ult_version_pagina uvp
-  ON uvp.pagina_id_uuid = fp.id_pagina
+  ON uvp.id_pagina = pdv.id_pagina
 JOIN formularios_pagina_version fpv
-  ON fpv.id_pagina = REPLACE(fp.id_pagina::text, '-', '')
+  ON fpv.id_pagina = pdv.id_pagina
  AND fpv.fecha_creacion = uvp.fecha_max
 JOIN formularios_pagina_campo fpc
   ON fpc.id_pagina_version = fpv.id_pagina_version
@@ -174,13 +190,14 @@ JOIN formularios_campo fc
 `;
 
   // WHERE de visibilidad (público o asignado por tabla usuario↔formulario)
+  // ⚠️ Casts explícitos a ::text para tolerar esquemas donde id_formulario_id sea TEXT o UUID.
   private readonly visibleForUserWhere = `
 WHERE (f.es_publico = true)
    OR EXISTS (
         SELECT 1
         FROM formularios_user_formulario uf
-        WHERE uf.id_usuario_id = $1
-          AND uf.id_formulario_id = f.id
+        WHERE uf.id_usuario_id::text = $1::text
+          AND uf.id_formulario_id::text = f.id::text
       )
 `;
 
@@ -190,7 +207,7 @@ WHERE (f.es_publico = true)
   getFormsFlatAll = async (user: AuthUser): Promise<FormFlatRow[]> => {
     const sql = `${this.baseCteSql}
 ${this.visibleForUserWhere}
-ORDER BY categoria_nombre NULLS LAST, fp.secuencia, fpc.sequence NULLS LAST;`;
+ORDER BY categoria_nombre NULLS LAST, pagina_secuencia, campo_sequence NULLS LAST;`;
     const rows: FormFlatRow[] = await this.dataSource.query(sql, [
       user.nombre_usuario,
     ]);
@@ -202,8 +219,8 @@ ORDER BY categoria_nombre NULLS LAST, fp.secuencia, fpc.sequence NULLS LAST;`;
   // ---------------------------------------------
   getFormFlatById = async (formId: string): Promise<FormFlatRow[]> => {
     const sql = `${this.baseCteSql}
-WHERE f.id = $1
-ORDER BY categoria_nombre NULLS LAST, fp.secuencia, fpc.sequence NULLS LAST;`;
+WHERE f.id = $1::uuid
+ORDER BY categoria_nombre NULLS LAST, pagina_secuencia, campo_sequence NULLS LAST;`;
     const rows: FormFlatRow[] = await this.dataSource.query(sql, [formId]);
     return rows;
   };
@@ -216,17 +233,17 @@ ORDER BY categoria_nombre NULLS LAST, fp.secuencia, fpc.sequence NULLS LAST;`;
     user: AuthUser,
   ): Promise<FormFlatRow[]> => {
     const sql = `${this.baseCteSql}
-WHERE f.id = $1
+WHERE f.id = $1::uuid
   AND (
         f.es_publico = true
      OR EXISTS (
           SELECT 1
           FROM formularios_user_formulario uf
-          WHERE uf.id_usuario_id = $2
-            AND uf.id_formulario_id = f.id
+          WHERE uf.id_usuario_id::text = $2::text
+            AND uf.id_formulario_id::text = f.id::text
         )
   )
-ORDER BY categoria_nombre NULLS LAST, fp.secuencia, fpc.sequence NULLS LAST;`;
+ORDER BY categoria_nombre NULLS LAST, pagina_secuencia, campo_sequence NULLS LAST;`;
     const rows: FormFlatRow[] = await this.dataSource.query(sql, [
       formId,
       user.nombre_usuario,
@@ -276,35 +293,35 @@ ORDER BY categoria_nombre NULLS LAST, fp.secuencia, fpc.sequence NULLS LAST;`;
     const canSql = `
       SELECT 1
       FROM formularios_formulario f
-      WHERE f.id = $1
+      WHERE f.id = $1::uuid
         AND (
           f.es_publico = true
           OR EXISTS (
             SELECT 1
             FROM formularios_user_formulario uf
-            WHERE uf.id_formulario_id = f.id
-              AND uf.id_usuario_id = $2
+            WHERE uf.id_formulario_id::text = f.id::text
+              AND uf.id_usuario_id::text    = $2::text
           )
         )
       LIMIT 1;
     `;
-    const can: {
-      length: number;
-    } = await this.dataSource.query(canSql, [dto.form_id, user.nombre_usuario]);
+    const can: { length: number } = await this.dataSource.query(canSql, [
+      dto.form_id,
+      user.nombre_usuario,
+    ]);
     if (can.length === 0) {
       throw new ForbiddenException('No tenés permiso para este formulario');
     }
 
-    // 2) la versión pertenece al formulario?
+    // 2) la versión pertenece al formulario? (ahora por tabla puente)
     const verSql = `
       SELECT 1
-      FROM formularios_formularioindexversion
-      WHERE id_index_version = $1 AND formulario_id = $2
+      FROM formularios_formularios_index_version
+      WHERE id_index_version = $1::uuid
+        AND id_formulario    = $2::uuid
       LIMIT 1;
     `;
-    const ver: {
-      length: number;
-    } = await this.dataSource.query(verSql, [
+    const ver: { length: number } = await this.dataSource.query(verSql, [
       dto.index_version_id,
       dto.form_id,
     ]);
@@ -318,7 +335,7 @@ ORDER BY categoria_nombre NULLS LAST, fp.secuencia, fpc.sequence NULLS LAST;`;
         id_usuario_id, form_id, form_name, index_version_id,
         filled_at_local, status, fill_json, form_json
       )
-      VALUES ($1, $2, $3, $4, $5::timestamptz, $6, $7::jsonb, $8::jsonb)
+      VALUES ($1, $2::uuid, $3, $4::uuid, $5::timestamptz, $6, $7::jsonb, $8::jsonb)
       RETURNING id, created_at, updated_at;
     `;
     const params = [
@@ -680,15 +697,15 @@ ORDER BY categoria_nombre NULLS LAST, fp.secuencia, fpc.sequence NULLS LAST;`;
 
     const colset = new Set(valorCols.map((c) => c.column_name));
     const hasVersionId = colset.has('version_id'); // legacy
-    const hasFuenteId = colset.has('fuente_id'); // esquema nuevo típico
-    const hasVersion = colset.has('version'); // esquema nuevo con versionado “in-line”
+    const hasFuenteId = colset.has('fuente_id'); // esquema actual
+    const hasVersion = colset.has('version'); // si el valor trae version in-line
 
     // ----------------------------
     // 1) WHERE de visibilidad
     // ----------------------------
     const params: any[] = [user.nombre_usuario];
     const visibleWhereWithOptionalForm =
-      this.visibleForUserWhere + (opts?.formId ? ' AND f.id = $2 ' : '');
+      this.visibleForUserWhere + (opts?.formId ? ' AND f.id = $2::uuid ' : '');
     if (opts?.formId) params.push(opts.formId);
 
     // ----------------------------
@@ -805,13 +822,6 @@ ORDER BY categoria_nombre NULLS LAST, fp.secuencia, fpc.sequence NULLS LAST;`;
     `;
     } else {
       // ====== MODO B: esquema nuevo (sin tabla de versiones) ======
-      // Opcionales según columnas presentes en *_valor
-      const joinByFuente = hasFuenteId
-        ? `AND val.fuente_id = dp.fuente_id`
-        : '';
-      // Si existe columna version en *_valor, podemos:
-      //   - respetar dp.version_conf cuando viene
-      //   - si NO viene, tomar la última por fuente/columna/campo
       const extraCteLatest =
         hasVersion && hasFuenteId
           ? `,
@@ -870,7 +880,6 @@ ORDER BY categoria_nombre NULLS LAST, fp.secuencia, fpc.sequence NULLS LAST;`;
           ON (dp.fuente_id IS NULL OR ${hasFuenteId ? 'val.fuente_id = dp.fuente_id' : 'TRUE'})
          AND (dp.columna_conf IS NULL OR val.columna = dp.columna_conf)
          AND (val.campo_id IS NULL OR val.campo_id = dp.campo_id)
-         ${joinByFuente}
          ${versionPredicate}
         ${joinLatest}
       )
@@ -901,9 +910,10 @@ ORDER BY categoria_nombre NULLS LAST, fp.secuencia, fpc.sequence NULLS LAST;`;
     // ----------------------------
     // 4) Ejecutar y normalizar
     // ----------------------------
-    const raw = await this.dataSource.query(sql, params);
 
-    const out: DatasetTable[] = raw.map((r: any) => {
+    const raw: DatasetRaw[] = await this.dataSource.query(sql, params);
+
+    const out: DatasetTable[] = raw.map((r: DatasetRaw) => {
       const rows =
         typeof r.rows === 'string'
           ? (JSON.parse(r.rows) as DatasetTableRow[])

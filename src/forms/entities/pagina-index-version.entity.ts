@@ -1,3 +1,4 @@
+// src/entities/pagina-index-version.entity.ts
 import { Entity, ManyToOne, PrimaryColumn, JoinColumn, Column } from 'typeorm';
 import { FormularioVersion } from './formulario-version.entity';
 import { Pagina } from './pagina.entity';
