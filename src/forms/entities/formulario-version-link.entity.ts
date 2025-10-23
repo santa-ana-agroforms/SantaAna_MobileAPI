@@ -1,8 +1,9 @@
-import { Entity, ManyToOne, PrimaryColumn, JoinColumn, Column } from 'typeorm';
+// src/entities/formulario-version-link.entity.ts
+import { Column, Entity, ManyToOne, PrimaryColumn, JoinColumn } from 'typeorm';
 import { Formulario } from './formulario.entity';
 import { FormularioVersion } from './formulario-version.entity';
 
-// Tabla puente redundante entre formulario y versión
+// Tabla puente entre formulario y versión
 @Entity({ name: 'formularios_formularios_index_version' })
 export class FormularioVersionLink {
   @PrimaryColumn({ type: 'uuid', name: 'id_index_version' })

@@ -1,7 +1,6 @@
+// src/entities/formulario.entity.ts
 import { Column, Entity, OneToMany, PrimaryColumn } from 'typeorm';
-import { FormularioVersion } from './formulario-version.entity';
 import { FormularioVersionLink } from './formulario-version-link.entity';
-import { Pagina } from './pagina.entity';
 
 export enum FormaEnvio {
   EnLineaFueraLinea = 'En Linea/fuera Linea',
@@ -50,15 +49,10 @@ export class Formulario {
   @Column({ type: 'uuid', name: 'categoria_id', nullable: true })
   categoriaId!: string | null;
 
-  // Relación directa a versiones (tabla formularios_formularioindexversion)
-  @OneToMany(() => FormularioVersion, (v) => v.formulario)
-  versiones!: FormularioVersion[];
+  @Column({ type: 'int', name: 'periodicidad', nullable: true })
+  periodicidad!: number | null;
 
   // Relación por tabla puente (formularios_formularios_index_version)
   @OneToMany(() => FormularioVersionLink, (l) => l.formulario)
   versionesLink!: FormularioVersionLink[];
-
-  // Relación a páginas
-  @OneToMany(() => Pagina, (p) => p.formulario)
-  paginas!: Pagina[];
 }

@@ -1,12 +1,5 @@
-import {
-  Column,
-  Entity,
-  ManyToOne,
-  OneToMany,
-  PrimaryColumn,
-  JoinColumn,
-} from 'typeorm';
-import { Formulario } from './formulario.entity';
+// src/entities/formulario-version.entity.ts
+import { Column, Entity, OneToMany, PrimaryColumn } from 'typeorm';
 import { FormularioVersionLink } from './formulario-version-link.entity';
 import { PaginaIndexVersion } from './pagina-index-version.entity';
 
@@ -18,14 +11,7 @@ export class FormularioVersion {
   @Column({ type: 'timestamptz', name: 'fecha_creacion' })
   fechaCreacion!: Date;
 
-  @Column({ type: 'uuid', name: 'formulario_id' })
-  formularioId!: string;
-
-  @ManyToOne(() => Formulario, (f) => f.versiones, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'formulario_id', referencedColumnName: 'id' })
-  formulario!: Formulario;
-
-  // Rel: versión ↔ formulario (tabla puente adicional)
+  // Rel: versión ↔ formulario (tabla puente)
   @OneToMany(() => FormularioVersionLink, (l) => l.version)
   formulariosLink!: FormularioVersionLink[];
 
