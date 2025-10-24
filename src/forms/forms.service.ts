@@ -281,7 +281,8 @@ export class FormsService {
   };
 
   // ---------------------------------------------
-  // PLANO: un formulario por ID (sin filtro)
+  // PLANO: un formulario por ID (sin filtro de usuario ni disponibilidad)
+  // (útil para administración u obtener metadatos aunque esté fuera de ventana)
   // ---------------------------------------------
   getFormFlatById = async (formId: string): Promise<FormFlatRow[]> => {
     const sql = `${this.baseCteSql} WHERE f.id = $1::uuid ORDER BY categoria_nombre NULLS LAST, pagina_secuencia, campo_sequence NULLS LAST;`;
