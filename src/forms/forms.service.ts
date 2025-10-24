@@ -1,3 +1,7 @@
+/* eslint-disable @typescript-eslint/no-redundant-type-constituents */
+/* eslint-disable @typescript-eslint/no-unsafe-call */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment */
+/* eslint-disable @typescript-eslint/no-unsafe-member-access */
 // src/forms/forms.service.ts
 import {
   Injectable,
@@ -8,20 +12,24 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import type { AuthUser } from 'src/auth/types/auth.types';
 import type { CreateFormEntryDto } from './dto/create-entry.dto';
+import { transform } from '@swc/core';
+import type { Options, Output, JscConfig, ModuleConfig } from '@swc/core';
 
-// Tipado del resultado plano (coincide con los alias del SELECT)
+// ---------------------------
+// Tipos de datos y estructuras
+// ---------------------------
+
+// Resultado plano de SQL (coincide con alias del SELECT)
 export type FormFlatRow = {
   formulario_id: string;
   formulario_nombre: string;
   formulario_index_version_id: string;
   formulario_index_version_fecha: Date;
 
-  // Metadatos de periodicidad y disponibilidad del formulario
   formulario_periodicidad: number | null;
   formulario_disponible_desde: Date | null;
   formulario_disponible_hasta: Date | null;
 
-  // Categoría
   categoria_id: string | null;
   categoria_nombre: string | null;
   categoria_descripcion: string | null;
@@ -45,7 +53,7 @@ export type FormFlatRow = {
   campo_requerido: boolean;
 };
 
-// ===== Tipos de retorno para datasets como tablas =====
+// Dataset (tablas)
 type DatasetTableRow = {
   key: string | null;
   label: string;
@@ -60,7 +68,7 @@ export type DatasetTable = {
   fuente_id: string | null;
   version: number | null;
   columna: string | null;
-  mode: string | null; // 'pair' | 'list' | otros
+  mode: string | null;
   total_items: number;
   rows: DatasetTableRow[];
 };
@@ -72,10 +80,58 @@ export type DatasetRaw = {
   fuente_id: string | null;
   version: number | null;
   columna: string | null;
-  mode: string | null; // 'pair' | 'list' | otros
+  mode: string | null;
   total_items: number;
   rows: string; // JSON stringificado
 };
+
+// ÁRBOL de formulario
+export interface CampoNode {
+  id_campo: string;
+  sequence: number | null;
+  tipo: string;
+  clase: string;
+  nombre_interno: string;
+  etiqueta: string;
+  ayuda: string | null;
+  config: unknown;
+  requerido: boolean;
+}
+
+export interface PaginaNode {
+  id_pagina: string;
+  secuencia: number;
+  nombre: string;
+  descripcion: string | null;
+  pagina_version: { id: string; fecha_creacion: Date };
+  campos: CampoNode[];
+}
+
+export interface FormTree {
+  id_formulario: string;
+  nombre: string;
+  version_vigente: { id_index_version: string; fecha_creacion: Date };
+  periodicidad: number | null;
+  disponibilidad: { desde: Date | null; hasta: Date | null };
+  paginas: PaginaNode[];
+}
+
+export interface CategoryTree {
+  nombre_categoria: string;
+  descripcion: string | null;
+  formularios: FormTree[];
+}
+
+type TranspileEvalResult = {
+  code: string;
+  engine: 'swc';
+  success: boolean;
+  error?: string;
+};
+
+// ---------------------------
+// Utilidades seguras (sin any)
+// ---------------------------
 
 const parseJsonSafe = <T = unknown>(val: unknown): unknown => {
   if (val == null) return null;
@@ -96,6 +152,8 @@ const toBool = (v: unknown): boolean => {
   }
   return false;
 };
+
+// ---------------------------
 
 @Injectable()
 export class FormsService {
@@ -153,7 +211,6 @@ export class FormsService {
    v.formulario_index_version_id               AS formulario_index_version_id,
    v.formulario_index_version_fecha            AS formulario_index_version_fecha,
 
-   -- Periodicidad (INTEGER) y ventana de disponibilidad (fechas)
    f.periodicidad                              AS formulario_periodicidad,
    f.disponible_desde_fecha                    AS formulario_disponible_desde,
    f.disponible_hasta_fecha                    AS formulario_disponible_hasta,
@@ -197,8 +254,7 @@ export class FormsService {
    ON fc.id_campo = fpc.id_campo
 `;
 
-  // WHERE de visibilidad (público o asignado por tabla usuario↔formulario)
-  // y DISPONIBILIDAD por fechas con la fecha local de Guatemala.
+  // WHERE de visibilidad + disponibilidad
   private readonly visibleForUserWhere = `
  WHERE (
         f.es_publico = true
@@ -225,8 +281,7 @@ export class FormsService {
   };
 
   // ---------------------------------------------
-  // PLANO: un formulario por ID (sin filtro de usuario ni disponibilidad)
-  // (útil para administración u obtener metadatos aunque esté fuera de ventana)
+  // PLANO: un formulario por ID (sin filtro)
   // ---------------------------------------------
   getFormFlatById = async (formId: string): Promise<FormFlatRow[]> => {
     const sql = `${this.baseCteSql} WHERE f.id = $1::uuid ORDER BY categoria_nombre NULLS LAST, pagina_secuencia, campo_sequence NULLS LAST;`;
@@ -235,7 +290,7 @@ export class FormsService {
   };
 
   // ---------------------------------------------
-  // PLANO: un formulario por ID (filtrado por usuario + disponibilidad)
+  // PLANO: un formulario por ID (con filtro de usuario + disponibilidad)
   // ---------------------------------------------
   getFormFlatByIdForUser = async (
     formId: string,
@@ -260,48 +315,63 @@ export class FormsService {
       formId,
       user.nombre_usuario,
     ]);
-
     return rows;
   };
 
   // ---------------------------------------------
   // ÁRBOL: un formulario (sin filtro)
   // ---------------------------------------------
-  getFormTreeById = async (formId: string) => {
+  getFormTreeById = async (formId: string): Promise<FormTree | null> => {
     const flat = await this.getFormFlatById(formId);
     if (flat.length === 0) return null;
-    return this.buildTreeFromFlat(flat);
+    const tree = this.buildTreeFromFlat(flat);
+    await this.postProcessCalcInFormTree(tree);
+    return tree;
   };
 
   // ---------------------------------------------
-  // ÁRBOL: un formulario (filtrado por usuario + disponibilidad)
+  // ÁRBOL: un formulario (con filtro de usuario + disponibilidad)
   // ---------------------------------------------
-  getFormTreeByIdForUser = async (formId: string, user: AuthUser) => {
+  getFormTreeByIdForUser = async (
+    formId: string,
+    user: AuthUser,
+  ): Promise<FormTree | null> => {
     const flat = await this.getFormFlatByIdForUser(formId, user);
     if (flat.length === 0) return null;
-    return this.buildTreeFromFlat(flat);
+    const tree = this.buildTreeFromFlat(flat);
+    await this.postProcessCalcInFormTree(tree);
+    return tree;
   };
 
   // ---------------------------------------------
   // ÁRBOL: todos los formularios (filtrado por usuario + disponibilidad)
   // ---------------------------------------------
-  getFormsTreeAll = async (user: AuthUser) => {
+  getFormsTreeAll = async (user: AuthUser): Promise<FormTree[]> => {
     const flat = await this.getFormsFlatAll(user);
     if (flat.length === 0) return [];
-    return this.groupFlatIntoTrees(flat);
+    const trees = this.groupFlatIntoTrees(flat);
+    await this.postProcessCalcInFormTrees(trees);
+    return trees;
   };
 
   // ---------------------------------------------
   // Árbol agrupado por categoría (filtrado por usuario + disponibilidad)
   // ---------------------------------------------
-  getFormsTreeAllByCategory = async (user: AuthUser) => {
+  getFormsTreeAllByCategory = async (
+    user: AuthUser,
+  ): Promise<CategoryTree[]> => {
     const flat = await this.getFormsFlatAll(user);
     if (flat.length === 0) return [];
-    return this.groupFlatByCategory(flat);
+    const cats = this.groupFlatByCategory(flat);
+    await this.postProcessCalcInCategories(cats);
+    return cats;
   };
 
-  async createEntry(dto: CreateFormEntryDto, user: AuthUser) {
-    // 1) el usuario puede ver/usar ese form? (y debe estar disponible hoy en Guatemala)
+  // ---------------------------------------------
+  // ENTRIES: crear envío de formulario
+  // ---------------------------------------------
+  createEntry = async (dto: CreateFormEntryDto, user: AuthUser) => {
+    // 1) Verificación de acceso + ventana de disponibilidad
     const canSql = `
       SELECT 1
       FROM formularios_formulario f
@@ -329,7 +399,7 @@ export class FormsService {
       );
     }
 
-    // 2) la versión pertenece al formulario? (ahora por tabla puente)
+    // 2) La versión pertenece al formulario (tabla puente)
     const verSql = `
       SELECT 1
       FROM formularios_formularios_index_version
@@ -345,7 +415,7 @@ export class FormsService {
       throw new BadRequestException('index_version_id no pertenece a form_id');
     }
 
-    // 3) insertar (si no mandan filled_at_local, usamos "ahora" de Guatemala)
+    // 3) Insertar entry
     const insSql = `
       INSERT INTO formularios_entry (
         id_usuario_id, form_id, form_name, index_version_id,
@@ -358,7 +428,7 @@ export class FormsService {
       )
       RETURNING id, created_at, updated_at;
     `;
-    const params = [
+    const params: unknown[] = [
       user.nombre_usuario,
       dto.form_id,
       dto.form_name,
@@ -369,47 +439,28 @@ export class FormsService {
       JSON.stringify(dto.form_json ?? {}),
     ];
 
-    const [row]: {
+    const [row]: Array<{
       id: string;
       created_at: Date;
       updated_at: Date;
       status: string;
-    }[] = await this.dataSource.query(insSql, params);
+    }> = await this.dataSource.query(insSql, params);
+
     return {
       id: row.id,
       created_at: row.created_at,
       updated_at: row.updated_at,
       status: dto.status,
     };
-  }
+  };
 
-  // ===== Helpers de armado =====
+  // ======================
+  // ====== BUILDERS ======
+  // ======================
 
-  private buildTreeFromFlat(flat: FormFlatRow | FormFlatRow[]) {
+  private buildTreeFromFlat = (flat: FormFlatRow | FormFlatRow[]): FormTree => {
     const rows = Array.isArray(flat) ? flat : [flat];
     const base = rows[0];
-
-    // Agrupar por página
-    type CampoNode = {
-      id_campo: string;
-      sequence: number | null;
-      tipo: string;
-      clase: string;
-      nombre_interno: string;
-      etiqueta: string;
-      ayuda: string | null;
-      config: unknown;
-      requerido: boolean;
-    };
-
-    type PaginaNode = {
-      id_pagina: string;
-      secuencia: number;
-      nombre: string;
-      descripcion: string | null;
-      pagina_version: { id: string; fecha_creacion: Date };
-      campos: CampoNode[];
-    };
 
     const paginasMap = new Map<string, PaginaNode>();
 
@@ -428,6 +479,7 @@ export class FormsService {
         });
       }
       const pg = paginasMap.get(r.pagina_id)!;
+      const cfgParsed = parseJsonSafe(r.campo_config);
       pg.campos.push({
         id_campo: r.campo_id,
         sequence: r.campo_sequence,
@@ -436,7 +488,7 @@ export class FormsService {
         nombre_interno: r.campo_nombre_interno,
         etiqueta: r.campo_etiqueta,
         ayuda: r.campo_ayuda ?? null,
-        config: parseJsonSafe(r.campo_config),
+        config: cfgParsed,
         requerido: toBool(r.campo_requerido),
       });
     }
@@ -468,29 +520,10 @@ export class FormsService {
       },
       paginas,
     };
-  }
+  };
 
-  private groupFlatIntoTrees(flat: FormFlatRow[]) {
-    type CampoNode = {
-      id_campo: string;
-      sequence: number | null;
-      tipo: string;
-      clase: string;
-      nombre_interno: string;
-      etiqueta: string;
-      ayuda: string | null;
-      config: unknown;
-      requerido: boolean;
-    };
-    type PaginaNode = {
-      id_pagina: string;
-      secuencia: number;
-      nombre: string;
-      descripcion: string | null;
-      pagina_version: { id: string; fecha_creacion: Date };
-      campos: CampoNode[];
-    };
-    type FormNode = {
+  private groupFlatIntoTrees = (flat: FormFlatRow[]): FormTree[] => {
+    type FormNodeAgg = {
       id_formulario: string;
       nombre: string;
       version_vigente: { id_index_version: string; fecha_creacion: Date };
@@ -499,7 +532,7 @@ export class FormsService {
       paginasMap: Map<string, PaginaNode>;
     };
 
-    const formsMap = new Map<string, FormNode>();
+    const formsMap = new Map<string, FormNodeAgg>();
 
     for (const r of flat) {
       if (!formsMap.has(r.formulario_id)) {
@@ -535,6 +568,7 @@ export class FormsService {
       }
 
       const pg = form.paginasMap.get(r.pagina_id)!;
+      const cfgParsed = parseJsonSafe(r.campo_config);
       pg.campos.push({
         id_campo: r.campo_id,
         sequence: r.campo_sequence,
@@ -543,12 +577,12 @@ export class FormsService {
         nombre_interno: r.campo_nombre_interno,
         etiqueta: r.campo_etiqueta,
         ayuda: r.campo_ayuda ?? null,
-        config: parseJsonSafe(r.campo_config),
+        config: cfgParsed,
         requerido: toBool(r.campo_requerido),
       });
     }
 
-    const result = Array.from(formsMap.values()).map((f) => {
+    const result = Array.from(formsMap.values()).map<FormTree>((f) => {
       const paginas = Array.from(f.paginasMap.values()).sort((a, b) => {
         if (a.secuencia !== b.secuencia) return a.secuencia - b.secuencia;
         return a.id_pagina.localeCompare(b.id_pagina);
@@ -573,30 +607,10 @@ export class FormsService {
 
     result.sort((a, b) => a.id_formulario.localeCompare(b.id_formulario));
     return result;
-  }
+  };
 
-  // Agrupador por categoría con el shape solicitado
-  private groupFlatByCategory(flat: FormFlatRow[]) {
-    type CampoNode = {
-      id_campo: string;
-      sequence: number | null;
-      tipo: string;
-      clase: string;
-      nombre_interno: string;
-      etiqueta: string;
-      ayuda: string | null;
-      config: unknown;
-      requerido: boolean;
-    };
-    type PaginaNode = {
-      id_pagina: string;
-      secuencia: number;
-      nombre: string;
-      descripcion: string | null;
-      pagina_version: { id: string; fecha_creacion: Date };
-      campos: CampoNode[];
-    };
-    type FormNode = {
+  private groupFlatByCategory = (flat: FormFlatRow[]): CategoryTree[] => {
+    type FormNodeAgg = {
       id_formulario: string;
       nombre: string;
       version_vigente: { id_index_version: string; fecha_creacion: Date };
@@ -604,13 +618,13 @@ export class FormsService {
       disponibilidad: { desde: Date | null; hasta: Date | null };
       paginasMap: Map<string, PaginaNode>;
     };
-    type CatNode = {
+    type CatNodeAgg = {
       nombre_categoria: string;
       descripcion: string | null;
-      formsMap: Map<string, FormNode>;
+      formsMap: Map<string, FormNodeAgg>;
     };
 
-    const catMap = new Map<string, CatNode>();
+    const catMap = new Map<string, CatNodeAgg>();
 
     const keyOf = (r: FormFlatRow) => r.categoria_id ?? '__SIN_CATEGORIA__';
     const nameOf = (r: FormFlatRow) => r.categoria_nombre ?? 'Sin categoría';
@@ -621,7 +635,7 @@ export class FormsService {
         catMap.set(key, {
           nombre_categoria: nameOf(r),
           descripcion: r.categoria_descripcion ?? null,
-          formsMap: new Map<string, FormNode>(),
+          formsMap: new Map<string, FormNodeAgg>(),
         });
       }
       const cat = catMap.get(key)!;
@@ -658,7 +672,7 @@ export class FormsService {
         });
       }
       const pg = form.paginasMap.get(r.pagina_id)!;
-
+      const cfgParsed = parseJsonSafe(r.campo_config);
       pg.campos.push({
         id_campo: r.campo_id,
         sequence: r.campo_sequence,
@@ -667,13 +681,13 @@ export class FormsService {
         nombre_interno: r.campo_nombre_interno,
         etiqueta: r.campo_etiqueta,
         ayuda: r.campo_ayuda ?? null,
-        config: parseJsonSafe(r.campo_config),
+        config: cfgParsed,
         requerido: toBool(r.campo_requerido),
       });
     }
 
-    const out = Array.from(catMap.values()).map((c) => {
-      const formularios = Array.from(c.formsMap.values()).map((f) => {
+    const out = Array.from(catMap.values()).map<CategoryTree>((c) => {
+      const formularios = Array.from(c.formsMap.values()).map<FormTree>((f) => {
         const paginas = Array.from(f.paginasMap.values()).sort((a, b) => {
           if (a.secuencia !== b.secuencia) return a.secuencia - b.secuencia;
           return a.id_pagina.localeCompare(b.id_pagina);
@@ -706,13 +720,12 @@ export class FormsService {
 
     out.sort((a, b) => a.nombre_categoria.localeCompare(b.nombre_categoria));
     return out;
-  }
+  };
 
-  /**
-   * Obtiene todos los datasets requeridos por los campos tipo "dataset"
-   * visibles para el usuario (formularios públicos o asignados) y los
-   * devuelve agrupados como “tablas” por campo.
-   */
+  // ============================================================
+  // ============== DATASETS (sin any / con unknown) ============
+  // ============================================================
+
   getUserDatasetsAsTables = async (
     user: AuthUser,
     opts?: { formId?: string },
@@ -734,12 +747,12 @@ export class FormsService {
       );
 
     const colset = new Set(valorCols.map((c) => c.column_name));
-    const hasVersionId = colset.has('version_id'); // legacy
-    const hasFuenteId = colset.has('fuente_id'); // esquema actual
-    const hasVersion = colset.has('version'); // si el valor trae version in-line
+    const hasVersionId = colset.has('version_id');
+    const hasFuenteId = colset.has('fuente_id');
+    const hasVersion = colset.has('version');
 
     // 1) WHERE de visibilidad + disponibilidad (y opcional por form)
-    const params: any[] = [user.nombre_usuario];
+    const params: unknown[] = [user.nombre_usuario];
     const visibleWhereWithOptionalForm =
       this.visibleForUserWhere + (opts?.formId ? ' AND f.id = $2::uuid ' : '');
     if (opts?.formId) params.push(opts.formId);
@@ -945,7 +958,7 @@ export class FormsService {
       const rows =
         typeof r.rows === 'string'
           ? (JSON.parse(r.rows) as DatasetTableRow[])
-          : ((r.rows as DatasetTableRow[]) ?? []);
+          : (r.rows ?? []);
       return {
         campo_id: r.campo_id,
         nombre_interno: r.nombre_interno,
@@ -963,5 +976,179 @@ export class FormsService {
     });
 
     return out;
+  };
+
+  // ============================================================
+  // ============== SWC → CJS (apto para Hermes eval) ===========
+  // ============================================================
+
+  transpileModuleForHermesEval = async (
+    tsCode: string,
+    swcOptions?: Partial<Options>,
+  ): Promise<TranspileEvalResult> => {
+    try {
+      // Construcción tipada (sin any) de jsc y module
+      const jsc: JscConfig = {
+        parser: { syntax: 'typescript', tsx: false, decorators: true },
+        target: 'es2019',
+        externalHelpers: true,
+        ...(swcOptions?.jsc ?? {}),
+      };
+
+      const userModule: ModuleConfig | undefined = swcOptions?.module;
+
+      // Quitamos `type` del módulo del usuario para no duplicarlo en el literal
+      const moduleRest: Omit<ModuleConfig, 'type'> = userModule
+        ? (() => {
+            const m = { ...userModule } as Record<string, unknown>;
+            delete m.type;
+            return m as Omit<ModuleConfig, 'type'>;
+          })()
+        : ({} as Omit<ModuleConfig, 'type'>);
+
+      const moduleCfg: ModuleConfig = {
+        strictMode: false,
+        noInterop: true,
+        ...moduleRest, // aquí ya NO viene `type`
+        type: 'commonjs', // lo fijamos nosotros
+      };
+
+      // Opciones completas, tipadas como Options
+      const transformOptions: Options = {
+        ...swcOptions,
+        jsc, // reinyectamos para asegurar nuestra fusión
+        module: moduleCfg,
+        isModule: swcOptions?.isModule ?? true,
+        sourceMaps: swcOptions?.sourceMaps ?? false,
+        minify: swcOptions?.minify ?? false,
+      };
+
+      // Llamada tipada: Output tiene { code, map? }
+      const { code: cjs }: Output = await transform(tsCode, transformOptions);
+
+      const wrapped = `(function(){var module={exports:{}},exports=module.exports;
+${cjs}
+return (module.exports && Object.keys(module.exports).length ? module.exports : exports);
+})()`;
+
+      return { code: wrapped, success: true, engine: 'swc' };
+    } catch (e: unknown) {
+      const message =
+        e instanceof Error
+          ? e.message
+          : typeof e === 'string'
+            ? e
+            : JSON.stringify(e);
+      return {
+        code: '',
+        success: false,
+        engine: 'swc',
+        error: message,
+      };
+    }
+  };
+
+  // ============================================================
+  // =================== CALC POST-PROCESADO ====================
+  // ============================================================
+
+  private isCalcField = (field: Pick<CampoNode, 'clase' | 'tipo'>): boolean => {
+    const clase = String(field?.clase ?? '').toLowerCase();
+    const tipo = String(field?.tipo ?? '').toLowerCase();
+    return clase === 'calc' || tipo === 'calc';
+  };
+
+  private getOperationFromConfig = (cfg: unknown): string | null => {
+    if (typeof cfg === 'string') return cfg;
+    if (typeof cfg === 'object' && cfg !== null) {
+      const obj = cfg as Record<string, unknown>;
+      const direct = obj['operation'];
+      if (typeof direct === 'string') return direct;
+      const calc = obj['calc'];
+      if (typeof calc === 'object' && calc !== null) {
+        const op = (calc as Record<string, unknown>)['operation'];
+        if (typeof op === 'string') return op;
+      }
+    }
+    return null;
+  };
+
+  private setOperationInConfig = (
+    cfgRef: unknown,
+    compiled: string,
+  ): Record<string, unknown> => {
+    const out: Record<string, unknown> =
+      typeof cfgRef === 'object' && cfgRef !== null
+        ? { ...(cfgRef as Record<string, unknown>) }
+        : {};
+    if (Object.prototype.hasOwnProperty.call(out, 'operation')) {
+      out['operation'] = compiled;
+      return out;
+    }
+    const calc =
+      typeof out['calc'] === 'object' && out['calc'] !== null
+        ? { ...(out['calc'] as Record<string, unknown>) }
+        : {};
+    calc['operation'] = compiled;
+    out['calc'] = calc;
+    return out;
+  };
+
+  private compileCalcOperationOrEmpty = async (
+    tsCode: string,
+  ): Promise<string> => {
+    try {
+      const res = await this.transpileModuleForHermesEval(tsCode, {
+        module: { type: 'commonjs', strictMode: false, noInterop: true },
+        jsc: {
+          parser: { syntax: 'typescript', tsx: false, decorators: true },
+          target: 'es2019',
+          externalHelpers: false,
+        },
+        isModule: true,
+        sourceMaps: false,
+        minify: false,
+      });
+      return res.success ? res.code : '';
+    } catch {
+      return '';
+    }
+  };
+
+  private postProcessCalcInFormTree = async (
+    formTree: FormTree,
+  ): Promise<void> => {
+    if (!formTree?.paginas) return;
+    for (const pagina of formTree.paginas) {
+      if (!pagina?.campos) continue;
+      await Promise.all(
+        pagina.campos.map(async (campo) => {
+          if (!this.isCalcField(campo)) return;
+          const opTs = this.getOperationFromConfig(campo.config);
+          if (!opTs) {
+            campo.config = this.setOperationInConfig(campo.config, '');
+            return;
+          }
+          const compiled = await this.compileCalcOperationOrEmpty(opTs);
+          campo.config = this.setOperationInConfig(campo.config, compiled);
+        }),
+      );
+    }
+  };
+
+  private postProcessCalcInFormTrees = async (
+    forms: FormTree[],
+  ): Promise<void> => {
+    await Promise.all(forms.map((f) => this.postProcessCalcInFormTree(f)));
+  };
+
+  private postProcessCalcInCategories = async (
+    cats: CategoryTree[],
+  ): Promise<void> => {
+    for (const c of cats) {
+      for (const f of c.formularios) {
+        await this.postProcessCalcInFormTree(f);
+      }
+    }
   };
 }

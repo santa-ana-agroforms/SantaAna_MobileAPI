@@ -98,13 +98,16 @@ ult_version_pagina AS (
 )
 `;
 
-  // Filtro de visibilidad (públicos o asignados al usuario)
-  private readonly visibleForUser = `
+  /**
+   * Filtro de visibilidad (públicos o asignados al usuario),
+   * parametrizable para usar $1, $2, etc. según el query.
+   */
+  private visibleForUserSql = (paramIndex: number) => `
   (f.es_publico = true)
   OR EXISTS (
       SELECT 1
       FROM formularios_user_formulario uf
-     WHERE uf.id_usuario_id::text  = $1::text
+     WHERE uf.id_usuario_id::text    = $${paramIndex}::text
        AND uf.id_formulario_id::text = f.id::text
   )
 `;
@@ -112,57 +115,73 @@ ult_version_pagina AS (
   // Plano de grupos (filtrado por usuario)
   private async getGroupsFlatAll(user: AuthUser): Promise<GroupFlatRow[]> {
     const sql = `
-${this.baseCteSql}
+${this.baseCteSql},
+/* Campos de clase 'group' colocados en páginas + ID de grupo desde su config */
+group_fields AS (
+  SELECT
+    f.id                 AS formulario_id,
+    pdv.id_pagina        AS pagina_id,
+    pdv.nombre           AS pagina_nombre,
+    pdv.secuencia        AS pagina_secuencia,
+    fpc.sequence         AS grupo_sequence,
+    cgrp.id_campo        AS id_campo_group,
+    /* UUID del grupo en config: admite 'id_group' o 'id_grupo' */
+    COALESCE(
+      NULLIF((COALESCE(NULLIF(cgrp.config::text,'')::jsonb,'{}'::jsonb)->>'id_group'),'')::uuid,
+      NULLIF((COALESCE(NULLIF(cgrp.config::text,'')::jsonb,'{}'::jsonb)->>'id_grupo'),'')::uuid
+    )                   AS id_grupo_cfg
+  FROM formularios_formulario f
+  JOIN version_vigente v
+    ON v.formulario_id = f.id
+  JOIN paginas_de_version pdv
+    ON pdv.id_index_version = v.formulario_index_version_id
+  JOIN ult_version_pagina uvp
+    ON uvp.id_pagina = pdv.id_pagina
+  JOIN formularios_pagina_version fpv
+    ON fpv.id_pagina = pdv.id_pagina
+   AND fpv.fecha_creacion = uvp.fecha_max
+  JOIN formularios_pagina_campo fpc
+    ON fpc.id_pagina_version = fpv.id_pagina_version
+  JOIN formularios_campo cgrp
+    ON cgrp.id_campo = fpc.id_campo
+   AND LOWER(cgrp.clase) = 'group'
+  WHERE ${this.visibleForUserSql(1)}
+)
 SELECT
-  g.id_grupo                               AS id_grupo,
-  g.nombre                                 AS grupo_nombre,
+  g.id_grupo                         AS id_grupo,
+  g.nombre                           AS grupo_nombre,
 
-  f.id                                     AS formulario_id,
-  pdv.id_pagina                            AS pagina_id,
-  pdv.nombre                               AS pagina_nombre,
-  pdv.secuencia                            AS pagina_secuencia,
+  gf.formulario_id                   AS formulario_id,
+  gf.pagina_id                       AS pagina_id,
+  gf.pagina_nombre                   AS pagina_nombre,
+  gf.pagina_secuencia                AS pagina_secuencia,
 
-  -- campos HIJOS del grupo
-  fc.id_campo                               AS campo_id,
-  fpc.sequence                              AS campo_sequence, -- usamos la sequence del CAMPO-GRUPO en la página
-  fc.tipo                                   AS campo_tipo,
-  fc.clase                                  AS campo_clase,
-  fc.nombre_campo                           AS campo_nombre_interno,
-  fc.etiqueta                               AS campo_etiqueta,
-  fc.ayuda                                  AS campo_ayuda,
-  fc.config                                 AS campo_config,
-  COALESCE(fc.requerido, false)             AS campo_requerido
-FROM formularios_formulario f
-JOIN version_vigente v
-  ON v.formulario_id = f.id
-JOIN paginas_de_version pdv
-  ON pdv.id_index_version = v.formulario_index_version_id
-JOIN ult_version_pagina uvp
-  ON uvp.id_pagina = pdv.id_pagina
-JOIN formularios_pagina_version fpv
-  ON fpv.id_pagina = pdv.id_pagina
- AND fpv.fecha_creacion = uvp.fecha_max
--- PAGE LAYOUT: el grupo está colocado en la página (no los hijos)
-JOIN formularios_pagina_campo fpc
-  ON fpc.id_pagina_version = fpv.id_pagina_version
--- Campo del GRUPO en la página:
-JOIN formularios_campo cgrp
-  ON cgrp.id_campo = fpc.id_campo
- AND LOWER(cgrp.clase) = 'group'
--- Entidad grupo (usa el campo del grupo cgrp.id_campo como id_campo_group)
+  /* Hijos del grupo */
+  fc.id_campo                        AS campo_id,
+  gf.grupo_sequence                  AS campo_sequence,
+  fc.tipo                            AS campo_tipo,
+  fc.clase                           AS campo_clase,
+  fc.nombre_campo                    AS campo_nombre_interno,
+  fc.etiqueta                        AS campo_etiqueta,
+  fc.ayuda                           AS campo_ayuda,
+  fc.config                          AS campo_config,
+  COALESCE(fc.requerido, false)      AS campo_requerido
+FROM group_fields gf
 JOIN formularios_grupo g
-  ON g.id_campo_group = cgrp.id_campo
--- Hijos del grupo:
+  ON g.id_grupo = gf.id_grupo_cfg              -- unimos por el id del JSON del campo group
 JOIN formularios_campo_grupo fcg
   ON fcg.id_grupo = g.id_grupo
 JOIN formularios_campo fc
   ON fc.id_campo = fcg.id_campo
-WHERE ${this.visibleForUser}
-ORDER BY g.nombre, pdv.secuencia, fpc.sequence NULLS LAST, fc.id_campo;
+ORDER BY g.nombre, gf.pagina_secuencia, gf.grupo_sequence NULLS LAST, fc.id_campo;
 `;
+    console.log('GroupsService.getGroupsFlatAll SQL:', sql);
+    // console.log('GroupsService.getGroupsFlatAll SQL:', sql);
     const rows: GroupFlatRow[] = await this.dataSource.query(sql, [
       user.nombre_usuario,
     ]);
+    console.log('GroupsService.getGroupsFlatAll rows:', rows);
+    // console.log('GroupsService.getGroupsFlatAll rows:', rows);
     return rows;
   }
 
@@ -172,60 +191,77 @@ ORDER BY g.nombre, pdv.secuencia, fpc.sequence NULLS LAST, fc.id_campo;
     user: AuthUser,
   ): Promise<GroupFlatRow[]> {
     const sql = `
-${this.baseCteSql}
+${this.baseCteSql},
+group_fields AS (
+  SELECT
+    f.id                 AS formulario_id,
+    pdv.id_pagina        AS pagina_id,
+    pdv.nombre           AS pagina_nombre,
+    pdv.secuencia        AS pagina_secuencia,
+    fpc.sequence         AS grupo_sequence,
+    cgrp.id_campo        AS id_campo_group,
+    COALESCE(
+      NULLIF((COALESCE(NULLIF(cgrp.config::text,'')::jsonb,'{}'::jsonb)->>'id_group'),'')::uuid,
+      NULLIF((COALESCE(NULLIF(cgrp.config::text,'')::jsonb,'{}'::jsonb)->>'id_grupo'),'')::uuid
+    )                   AS id_grupo_cfg
+  FROM formularios_formulario f
+  JOIN version_vigente v
+    ON v.formulario_id = f.id
+  JOIN paginas_de_version pdv
+    ON pdv.id_index_version = v.formulario_index_version_id
+  JOIN ult_version_pagina uvp
+    ON uvp.id_pagina = pdv.id_pagina
+  JOIN formularios_pagina_version fpv
+    ON fpv.id_pagina = pdv.id_pagina
+   AND fpv.fecha_creacion = uvp.fecha_max
+  JOIN formularios_pagina_campo fpc
+    ON fpc.id_pagina_version = fpv.id_pagina_version
+  JOIN formularios_campo cgrp
+    ON cgrp.id_campo = fpc.id_campo
+   AND LOWER(cgrp.clase) = 'group'
+  WHERE ${this.visibleForUserSql(2)}  -- aquí el usuario es $2, porque $1 es el id_grupo del WHERE externo
+)
 SELECT
-  g.id_grupo                               AS id_grupo,
-  g.nombre                                 AS grupo_nombre,
+  g.id_grupo                         AS id_grupo,
+  g.nombre                           AS grupo_nombre,
 
-  f.id                                     AS formulario_id,
-  pdv.id_pagina                            AS pagina_id,
-  pdv.nombre                               AS pagina_nombre,
-  pdv.secuencia                            AS pagina_secuencia,
+  gf.formulario_id                   AS formulario_id,
+  gf.pagina_id                       AS pagina_id,
+  gf.pagina_nombre                   AS pagina_nombre,
+  gf.pagina_secuencia                AS pagina_secuencia,
 
-  fc.id_campo                               AS campo_id,
-  fpc.sequence                              AS campo_sequence,
-  fc.tipo                                   AS campo_tipo,
-  fc.clase                                  AS campo_clase,
-  fc.nombre_campo                           AS campo_nombre_interno,
-  fc.etiqueta                               AS campo_etiqueta,
-  fc.ayuda                                  AS campo_ayuda,
-  fc.config                                 AS campo_config,
-  COALESCE(fc.requerido, false)             AS campo_requerido
-FROM formularios_formulario f
-JOIN version_vigente v
-  ON v.formulario_id = f.id
-JOIN paginas_de_version pdv
-  ON pdv.id_index_version = v.formulario_index_version_id
-JOIN ult_version_pagina uvp
-  ON uvp.id_pagina = pdv.id_pagina
-JOIN formularios_pagina_version fpv
-  ON fpv.id_pagina = pdv.id_pagina
- AND fpv.fecha_creacion = uvp.fecha_max
-JOIN formularios_pagina_campo fpc
-  ON fpc.id_pagina_version = fpv.id_pagina_version
-JOIN formularios_campo cgrp
-  ON cgrp.id_campo = fpc.id_campo
- AND LOWER(cgrp.clase) = 'group'
+  fc.id_campo                        AS campo_id,
+  gf.grupo_sequence                  AS campo_sequence,
+  fc.tipo                            AS campo_tipo,
+  fc.clase                           AS campo_clase,
+  fc.nombre_campo                    AS campo_nombre_interno,
+  fc.etiqueta                        AS campo_etiqueta,
+  fc.ayuda                           AS campo_ayuda,
+  fc.config                          AS campo_config,
+  COALESCE(fc.requerido, false)      AS campo_requerido
+FROM group_fields gf
 JOIN formularios_grupo g
-  ON g.id_campo_group = cgrp.id_campo
+  ON g.id_grupo = gf.id_grupo_cfg
 JOIN formularios_campo_grupo fcg
   ON fcg.id_grupo = g.id_grupo
 JOIN formularios_campo fc
   ON fc.id_campo = fcg.id_campo
 WHERE g.id_grupo = $1::uuid
-  AND (${this.visibleForUser})
-ORDER BY g.nombre, pdv.secuencia, fpc.sequence NULLS LAST, fc.id_campo;
+ORDER BY g.nombre, gf.pagina_secuencia, gf.grupo_sequence NULLS LAST, fc.id_campo;
 `;
     const rows: GroupFlatRow[] = await this.dataSource.query(sql, [
       id_grupo,
       user.nombre_usuario,
     ]);
+
+    // console.log('GroupsService.getGroupFlatById rows:', rows);
     return rows;
   }
 
   // ---- Árbol: todos los grupos visibles para el usuario
   async getGroupsTreeAll(user: AuthUser) {
     const flat = await this.getGroupsFlatAll(user);
+    // console.log('GroupsService.getGroupsTreeAll flat:', flat);
     if (flat.length === 0) return [];
     return this.groupFlatToTree(flat);
   }

@@ -14,6 +14,7 @@ import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { AuthUser } from 'src/auth/decorators/auth-user.decorator';
 import type { TypeAuthUser } from 'src/auth/decorators/auth-user.decorator';
 import { CreateFormEntryDto } from './dto/create-entry.dto';
+import { TranspileDto } from './dto/transpile.dto';
 
 @Controller('forms')
 @UseGuards(JwtAuthGuard)
@@ -83,5 +84,14 @@ export class FormsController {
     }
 
     return tables;
+  }
+
+  @Post('transpile')
+  async transpile(@Body() dto: TranspileDto) {
+    const result = await this.service.transpileModuleForHermesEval(
+      dto.code,
+      dto.options,
+    );
+    return result;
   }
 }
