@@ -2,8 +2,9 @@ name: e2e-tests
 
 on:
     push:
-        branches: [main]
+        branches: [develop]
     pull_request:
+        branches: [main, develop]
 
 concurrency:
     group: ${{ github.workflow }}-${{ github.ref }}-e2e
