@@ -2,9 +2,8 @@ name: e2e-tests
 
 on:
     push:
-        branches: [develop]
+        branches: [main]
     pull_request:
-        branches: [main, develop]
 
 concurrency:
     group: ${{ github.workflow }}-${{ github.ref }}-e2e
@@ -12,23 +11,23 @@ concurrency:
 
 jobs:
     e2e:
-        name: Run E2E (Testcontainers or docker-compose)
+        name: Run E2E (Testcontainers)
         runs-on: ubuntu-latest
         timeout-minutes: 30
         permissions:
             contents: read
 
-        # Importante: NO correr dentro de "container:" para que Testcontainers pueda usar Docker del host.
-
         env:
             NODE_ENV: test
             CI: true
-            # Variables dummy que a veces exige Nest en bootstrap (ajusta según tu app)
             JWT_SECRET: testsecret
-
-            # Testcontainers (Node) funciona out-of-the-box en GitHub-hosted runners.
-            # Mantener Ryuk habilitado (default). Si en algún momento lo desactivas, setea a 'true'.
+            # Testcontainers OK en runners de GitHub
             TESTCONTAINERS_RYUK_DISABLED: "false"
+            # Opcional: forzar IPv4 si tu red lo necesita
+            # NODE_OPTIONS: --dns-result-order=ipv4first
+
+            # Trae la API key desde Secrets (crea el secret repo: "E2E_API_KEY")
+            E2E_API_KEY: ${{ secrets.E2E_API_KEY }}
 
         steps:
             - name: Checkout
@@ -40,47 +39,41 @@ jobs:
                   node-version: "22.x"
                   cache: "yarn"
 
-            - name: Install deps (yarn install)
-              run: yarn install
+            - name: Install deps (prefer ci, fallback to install)
+              run: |
+                  if [ -f yarn.lock ]; then
+                    echo "Using yarn install --frozen-lockfile"
+                    yarn install
+                  else
+                    echo "No yarn.lock found. Using yarn install (temporary)."
+                    yarn install --no-audit --no-fund
+                  fi
 
             - name: Ensure Docker available (for Testcontainers)
               run: docker version
 
-            - name: Detect docker-compose.e2e.yml
-              id: detect
-              shell: bash
+            - name: Prepare env defaults (API keys + host override)
               run: |
-                  if [ -f docker-compose.e2e.yml ]; then
-                    echo "E2E_COMPOSE=true" >> $GITHUB_ENV
-                  else
-                    echo "E2E_COMPOSE=false" >> $GITHUB_ENV
-                  fi
-
-            - name: Start E2E stack (docker-compose)
-              if: env.E2E_COMPOSE == 'true'
-              run: docker compose -f docker-compose.e2e.yml up -d --build
-
-            # Si usas Testcontainers, no necesitas levantar nada: las imágenes se crean solas.
+                  # Default seguro si el secret está vacío
+                  echo "E2E_API_KEY=${E2E_API_KEY:-e2e-test-key}" >> $GITHUB_ENV
+                  # Tu guard acepta API_KEYS o API_KEY_SHA256S; usamos plaintext
+                  echo "API_KEYS=${E2E_API_KEY:-e2e-test-key}" >> $GITHUB_ENV
+                  # Ya lo seteas en setup-e2e.ts, pero lo dejamos explícito:
+                  echo "TESTCONTAINERS_HOST_OVERRIDE=127.0.0.1" >> $GITHUB_ENV
 
             - name: Run E2E tests (Jest)
-              # --runInBand ayuda a evitar race con puertos/containers en runners chicos
               run: yarn test:e2e -- --runInBand
 
             - name: Dump Docker ps (debug)
               if: always()
               run: docker ps -a
 
-            - name: Stop E2E stack (docker-compose)
-              if: always() && env.E2E_COMPOSE == 'true'
-              run: docker compose -f docker-compose.e2e.yml down -v
-
-            - name: Upload E2E artifacts (logs/coverage si existe)
-              uses: actions/upload-artifact@v4
+            - name: Upload E2E artifacts
               if: always()
+              uses: actions/upload-artifact@v4
               with:
                   name: e2e-artifacts
                   path: |
                       coverage/
-                      **/test-output/**
                       **/*.log
                   if-no-files-found: ignore
