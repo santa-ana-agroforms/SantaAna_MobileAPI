@@ -17,7 +17,7 @@ import { Campo } from './campo.entity';
 ])
 @Check('sequence >= 0')
 export class PaginaCampo {
-  @PrimaryColumn({ type: 'varchar', length: 32, name: 'id_campo' })
+  @PrimaryColumn({ type: 'uuid', name: 'id_campo' })
   campoId!: string;
 
   @Column({ type: 'int', name: 'sequence', nullable: true })

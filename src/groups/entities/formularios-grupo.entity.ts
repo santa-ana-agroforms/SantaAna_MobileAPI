@@ -6,12 +6,12 @@ import {
   OneToOne,
   PrimaryColumn,
 } from 'typeorm';
-import { Campo } from 'src/forms/entities';
+import { Campo } from '../../forms/entities';
 import { CampoGrupo } from './formularios-campo-grupo.entity';
 
 @Entity({ name: 'formularios_grupo' })
 export class Grupo {
-  @PrimaryColumn({ type: 'varchar', length: 64, name: 'id_grupo' })
+  @PrimaryColumn({ type: 'uuid', name: 'id_grupo' })
   idGrupo!: string;
 
   @Column({ type: 'varchar', length: 150 })
@@ -19,8 +19,7 @@ export class Grupo {
 
   // ÚNICO + FK a formularios_campo(id_campo)
   @Column({
-    type: 'varchar',
-    length: 32,
+    type: 'uuid',
     name: 'id_campo_group',
     unique: true,
   })

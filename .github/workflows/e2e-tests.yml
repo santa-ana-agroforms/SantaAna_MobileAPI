@@ -1,0 +1,79 @@
+name: e2e-tests
+
+on:
+    push:
+        branches: [main]
+    pull_request:
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}-e2e
+    cancel-in-progress: true
+
+jobs:
+    e2e:
+        name: Run E2E (Testcontainers)
+        runs-on: ubuntu-latest
+        timeout-minutes: 30
+        permissions:
+            contents: read
+
+        env:
+            NODE_ENV: test
+            CI: true
+            JWT_SECRET: testsecret
+            # Testcontainers OK en runners de GitHub
+            TESTCONTAINERS_RYUK_DISABLED: "false"
+            # Opcional: forzar IPv4 si tu red lo necesita
+            # NODE_OPTIONS: --dns-result-order=ipv4first
+
+            # Trae la API key desde Secrets (crea el secret repo: "E2E_API_KEY")
+            E2E_API_KEY: ${{ secrets.E2E_API_KEY }}
+
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "22.x"
+                  cache: "yarn"
+
+            - name: Install deps (prefer ci, fallback to install)
+              run: |
+                  if [ -f yarn.lock ]; then
+                    echo "Using yarn install --frozen-lockfile"
+                    yarn install
+                  else
+                    echo "No yarn.lock found. Using yarn install (temporary)."
+                    yarn install --no-audit --no-fund
+                  fi
+
+            - name: Ensure Docker available (for Testcontainers)
+              run: docker version
+
+            - name: Prepare env defaults (API keys + host override)
+              run: |
+                  # Default seguro si el secret está vacío
+                  echo "E2E_API_KEY=${E2E_API_KEY:-e2e-test-key}" >> $GITHUB_ENV
+                  # Tu guard acepta API_KEYS o API_KEY_SHA256S; usamos plaintext
+                  echo "API_KEYS=${E2E_API_KEY:-e2e-test-key}" >> $GITHUB_ENV
+                  # Ya lo seteas en setup-e2e.ts, pero lo dejamos explícito:
+                  echo "TESTCONTAINERS_HOST_OVERRIDE=127.0.0.1" >> $GITHUB_ENV
+
+            - name: Run E2E tests (Jest)
+              run: yarn test:e2e -- --runInBand
+
+            - name: Dump Docker ps (debug)
+              if: always()
+              run: docker ps -a
+
+            - name: Upload E2E artifacts
+              if: always()
+              uses: actions/upload-artifact@v4
+              with:
+                  name: e2e-artifacts
+                  path: |
+                      coverage/
+                      **/*.log
+                  if-no-files-found: ignore

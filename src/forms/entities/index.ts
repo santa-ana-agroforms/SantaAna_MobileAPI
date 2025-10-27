@@ -7,3 +7,8 @@ export { Pagina } from './pagina.entity';
 export { PaginaVersion } from './pagina-version.entity';
 export { PaginaIndexVersion } from './pagina-index-version.entity';
 export { PaginaCampo } from './pagina-campo.entity';
+export { Categoria } from './categoria.entity';
+export { ClaseCampo } from './clase-campo.entity';
+export { FuenteDatos } from './fuente-datos.entity';
+export { FuenteDatosValor } from './fuente-datos-valor.entity';
+export { Entry } from './entry.entity';

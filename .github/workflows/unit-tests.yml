@@ -1,0 +1,52 @@
+name: unit-tests
+
+on:
+    push:
+        branches: [develop]
+    pull_request:
+        branches: [main, develop]
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    unit:
+        name: Run unit tests (Jest)
+        runs-on: ubuntu-latest
+        timeout-minutes: 15
+        permissions:
+            contents: read
+
+        env:
+            NODE_ENV: test
+            CI: true
+            # Si tu código requiere secretos en unit (p.ej. JWT), define un secreto en el repo y cámbialo acá.
+            JWT_SECRET: testsecret
+
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "22.x"
+                  cache: "yarn"
+
+            - name: Install deps (yarn install)
+              run: yarn install
+
+            # Opcional: lint (déjalo comentado si no quieres fallar por estilo)
+            # - name: Lint
+            #   run: npm run lint -- --max-warnings=0
+
+            - name: Run unit tests + coverage
+              run: yarn test --coverage
+
+            - name: Upload coverage artifact
+              uses: actions/upload-artifact@v4
+              with:
+                  name: coverage-unit
+                  path: coverage/
+                  if-no-files-found: ignore

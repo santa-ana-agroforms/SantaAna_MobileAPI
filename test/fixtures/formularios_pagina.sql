@@ -1,0 +1,9 @@
+INSERT INTO public.formularios_pagina (id_pagina, secuencia, nombre, descripcion) VALUES ('3bfb9454-ae8d-4824-8532-53f7122f78cd', 1, 'General', '');
+INSERT INTO public.formularios_pagina (id_pagina, secuencia, nombre, descripcion) VALUES ('88c4b3d8-6471-4378-ae9d-b522db32a6e1', 1, 'General', '');
+INSERT INTO public.formularios_pagina (id_pagina, secuencia, nombre, descripcion) VALUES ('06044926-d07c-4bc0-85a8-d564109c459c', 1, 'General', '');
+INSERT INTO public.formularios_pagina (id_pagina, secuencia, nombre, descripcion) VALUES ('5cb838eb-896c-481a-ae0f-cede86fc8f1a', 1, 'General', '');
+INSERT INTO public.formularios_pagina (id_pagina, secuencia, nombre, descripcion) VALUES ('2c50f6c7-0d6a-459b-ba58-ff923871d375', 1, 'General', '');
+INSERT INTO public.formularios_pagina (id_pagina, secuencia, nombre, descripcion) VALUES ('4da46d26-7617-4e05-afba-a684d0992b80', 1, 'General', '');
+INSERT INTO public.formularios_pagina (id_pagina, secuencia, nombre, descripcion) VALUES ('64970879-45d0-44c6-ac9b-07bf303a6d13', 1, 'General', '');
+INSERT INTO public.formularios_pagina (id_pagina, secuencia, nombre, descripcion) VALUES ('2a28f3fd-28b2-4c1d-a047-a3c169594ebe', 1, 'General', '');
+INSERT INTO public.formularios_pagina (id_pagina, secuencia, nombre, descripcion) VALUES ('637fec60-30a3-478e-8b15-4a751354974e', 1, 'General', '');

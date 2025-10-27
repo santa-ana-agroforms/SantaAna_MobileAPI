@@ -5,7 +5,7 @@ import {
   ManyToOne,
   PrimaryGeneratedColumn,
 } from 'typeorm';
-import { Formulario } from 'src/forms/entities';
+import { Formulario } from '../../forms/entities';
 import { Usuario } from './formularios-usuario.entity';
 
 @Entity({ name: 'formularios_user_formulario' })
