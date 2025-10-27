@@ -32,17 +32,17 @@ jobs:
               uses: actions/setup-node@v4
               with:
                   node-version: "22.x"
-                  cache: "npm"
+                  cache: "yarn"
 
-            - name: Install deps (npm ci)
-              run: npm ci
+            - name: Install deps (yarn install)
+              run: yarn install
 
             # Opcional: lint (déjalo comentado si no quieres fallar por estilo)
             # - name: Lint
             #   run: npm run lint -- --max-warnings=0
 
             - name: Run unit tests + coverage
-              run: npm run test -- --coverage
+              run: yarn test --coverage
 
             - name: Upload coverage artifact
               uses: actions/upload-artifact@v4

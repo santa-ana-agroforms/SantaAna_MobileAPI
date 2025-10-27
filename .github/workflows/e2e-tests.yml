@@ -38,10 +38,10 @@ jobs:
               uses: actions/setup-node@v4
               with:
                   node-version: "22.x"
-                  cache: "npm"
+                  cache: "yarn"
 
-            - name: Install deps (npm ci)
-              run: npm ci
+            - name: Install deps (yarn install)
+              run: yarn install
 
             - name: Ensure Docker available (for Testcontainers)
               run: docker version
@@ -64,7 +64,7 @@ jobs:
 
             - name: Run E2E tests (Jest)
               # --runInBand ayuda a evitar race con puertos/containers en runners chicos
-              run: npm run test:e2e -- --runInBand
+              run: yarn test:e2e -- --runInBand
 
             - name: Dump Docker ps (debug)
               if: always()
