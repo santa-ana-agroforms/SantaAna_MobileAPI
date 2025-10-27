@@ -1,0 +1,9 @@
+INSERT INTO public.formularios_pagina_index_version (id_pagina, id_index_version) VALUES ('3bfb9454-ae8d-4824-8532-53f7122f78cd', 'e929b7a7-f632-44db-92f2-0f521efb599c');
+INSERT INTO public.formularios_pagina_index_version (id_pagina, id_index_version) VALUES ('88c4b3d8-6471-4378-ae9d-b522db32a6e1', '64c88c5d-6031-40bc-8f71-1186b00b76a0');
+INSERT INTO public.formularios_pagina_index_version (id_pagina, id_index_version) VALUES ('06044926-d07c-4bc0-85a8-d564109c459c', 'ad8e0493-c9d6-472b-b7de-6aaccfd01c92');
+INSERT INTO public.formularios_pagina_index_version (id_pagina, id_index_version) VALUES ('5cb838eb-896c-481a-ae0f-cede86fc8f1a', '039776ce-296a-4697-a3ff-d52333fba0ca');
+INSERT INTO public.formularios_pagina_index_version (id_pagina, id_index_version) VALUES ('2c50f6c7-0d6a-459b-ba58-ff923871d375', '3f43f0f1-b397-4e39-8ac4-7a15727e1127');
+INSERT INTO public.formularios_pagina_index_version (id_pagina, id_index_version) VALUES ('4da46d26-7617-4e05-afba-a684d0992b80', '486b298b-0a92-4b20-9e64-44933a6d505e');
+INSERT INTO public.formularios_pagina_index_version (id_pagina, id_index_version) VALUES ('64970879-45d0-44c6-ac9b-07bf303a6d13', '226a7108-06a9-4980-b39b-8cb67d39601f');
+INSERT INTO public.formularios_pagina_index_version (id_pagina, id_index_version) VALUES ('2a28f3fd-28b2-4c1d-a047-a3c169594ebe', '7ebd4b91-7023-4ac7-b5a1-66bbb2b8f08b');
+INSERT INTO public.formularios_pagina_index_version (id_pagina, id_index_version) VALUES ('637fec60-30a3-478e-8b15-4a751354974e', '9f293dd5-f059-40e7-87b6-27671017db16');

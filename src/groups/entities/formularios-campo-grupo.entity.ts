@@ -6,7 +6,7 @@ import {
   PrimaryGeneratedColumn,
   Unique,
 } from 'typeorm';
-import { Campo } from 'src/forms/entities';
+import { Campo } from '../../forms/entities';
 import { Grupo } from './formularios-grupo.entity';
 
 @Entity({ name: 'formularios_campo_grupo' })
@@ -18,10 +18,10 @@ export class CampoGrupo {
   @PrimaryGeneratedColumn({ type: 'bigint', name: 'id' })
   id!: string; // bigint: recomendación manejarlo como string en TS
 
-  @Column({ type: 'varchar', length: 32, name: 'id_campo' })
+  @Column({ type: 'uuid', name: 'id_campo' })
   campoId!: string;
 
-  @Column({ type: 'varchar', length: 64, name: 'id_grupo' })
+  @Column({ type: 'uuid', name: 'id_grupo' })
   grupoId!: string;
 
   @ManyToOne(() => Campo, { onDelete: 'CASCADE' })

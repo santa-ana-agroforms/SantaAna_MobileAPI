@@ -2,7 +2,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
-import type { AuthUser } from 'src/auth/types/auth.types';
+import type { AuthUser } from '../auth/types/auth.types';
 
 export type GroupFlatRow = {
   id_grupo: string;
@@ -175,12 +175,10 @@ JOIN formularios_campo fc
   ON fc.id_campo = fcg.id_campo
 ORDER BY g.nombre, gf.pagina_secuencia, gf.grupo_sequence NULLS LAST, fc.id_campo;
 `;
-    console.log('GroupsService.getGroupsFlatAll SQL:', sql);
     // console.log('GroupsService.getGroupsFlatAll SQL:', sql);
     const rows: GroupFlatRow[] = await this.dataSource.query(sql, [
       user.nombre_usuario,
     ]);
-    console.log('GroupsService.getGroupsFlatAll rows:', rows);
     // console.log('GroupsService.getGroupsFlatAll rows:', rows);
     return rows;
   }

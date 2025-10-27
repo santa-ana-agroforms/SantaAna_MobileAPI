@@ -1,0 +1,128 @@
+services:
+  db:
+    image: postgres:16-alpine
+    ports:
+      - "9090:5432"
+    environment:
+      POSTGRES_DB: santa_ana_test
+      POSTGRES_USER: santa_ana
+      POSTGRES_PASSWORD: santa_ana
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U santa_ana -d santa_ana_test"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    volumes:
+      - pgtest:/var/lib/postgresql/data
+
+  api:
+    build:
+      context: .
+      dockerfile: dockerfile
+    environment:
+      NODE_ENV: test
+
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: santa_ana_test
+      DB_USER: santa_ana
+      DB_PASSWORD: santa_ana
+      DATABASE_URL: postgres://santa_ana:santa_ana@db:5432/santa_ana_test
+      DB_SYNC: "true"
+
+      API_KEYS: test-key-123
+      JWT_SECRET: devsecret
+      PG_SSL: "false"
+    depends_on:
+      db:
+        condition: service_healthy
+    expose:
+      - "3000"
+    command: >
+      sh -lc "
+        npx typeorm -d dist/database/data-source.js migration:run || true &&
+        node dist/main.js
+      "
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >
+          node -e "
+          const http=require('http');
+          const path=(process.env.BASE_PATH||'') + '/health';
+          const req=http.request({host:'127.0.0.1', port:3000, path, timeout:2000},
+            res=>process.exit(res.statusCode===200?0:1)
+          );
+          req.on('error',()=>process.exit(1));
+          req.end();
+          "
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 40s # 👈 dale más colchón mientras TypeORM crea tablas
+
+  seed:
+    build:
+      context: ./seeder
+      dockerfile: Dockerfile
+    depends_on:
+      api:
+        condition: service_healthy # 👈 en vez de service_started
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: santa_ana_test
+      DB_USER: santa_ana
+      DB_PASSWORD: santa_ana
+      DB_WAIT_SECONDS: 90
+      PG_SSLMODE: disable
+
+      # Usuario de prueba que usarán tus tests/locust
+      SEED_USERNAME: dahernadez
+      SEED_PASSWORD: diegomovil1
+      SEED_EMAIL: dahernadez@local.test
+      SEED_NAME: "Usuario Seed"
+
+      # Dónde están los .sql dentro del contenedor seeder
+      FIXTURES_DIR: /app/fixtures
+    volumes:
+      # monta tus sql del repo al contenedor del seeder
+      - ./test/fixtures:/app/fixtures:ro
+
+  locust:
+    image: locustio/locust:2.42.0
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+    working_dir: /mnt/locust
+    volumes:
+      - ./load:/mnt/locust
+    environment:
+      API_KEY: test-key-123
+      USERNAME: dahernadez # 👈 mismo que SEED_USERNAME
+      PASSWORD: diegomovil1 # 👈 mismo que SEED_PASSWORD
+      BASE_PATH: ""
+    command:
+      - -f
+      - /mnt/locust/locustfile.py
+      - --config
+      - /mnt/locust/locust.conf
+      - --host
+      - http://api:3000
+      - --headless
+      - -u
+      - "50"
+      - -r
+      - "5"
+      - -t
+      - 15m
+      - --only-summary
+      - --html
+      - /mnt/locust/reports/locust.html
+      - --csv
+      - /mnt/locust/reports/locust
+
+volumes:
+  pgtest:

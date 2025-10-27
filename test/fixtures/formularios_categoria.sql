@@ -1,0 +1,11 @@
+INSERT INTO public.formularios_categoria (id, nombre, descripcion) VALUES ('12e6a562-a8e4-4055-86ce-f5dcfd7bc95b', 'Operativo 1', 'Categoría auto-generada #1.');
+INSERT INTO public.formularios_categoria (id, nombre, descripcion) VALUES ('c5079d2e-496f-4e58-b414-9e5d48e09644', 'Seguridad', 'Valor_seguridad');
+INSERT INTO public.formularios_categoria (id, nombre, descripcion) VALUES ('60c49a30-f50b-4183-a478-e3ff580d71d4', 'Alimentos2', 'Alimentos2.0');
+INSERT INTO public.formularios_categoria (id, nombre, descripcion) VALUES ('3128f10b-8964-4d1b-afe2-fdade93614db', 'Produccion', 'Apoyo');
+INSERT INTO public.formularios_categoria (id, nombre, descripcion) VALUES ('70e147ea-7e0e-4be3-858b-d962d41dfe0e', 'Firma 1', 'Categoría auto-generada #1.');
+INSERT INTO public.formularios_categoria (id, nombre, descripcion) VALUES ('164bbfb4-cb3f-4e1e-9a7d-f57af75d7968', 'Comercial 4', 'Categoría auto-generada #4.');
+INSERT INTO public.formularios_categoria (id, nombre, descripcion) VALUES ('18aeacc3-a788-44fa-b05a-a338fb86753e', 'Operacion en campo', 'Operacion');
+INSERT INTO public.formularios_categoria (id, nombre, descripcion) VALUES ('bf1e508a-2e9f-45cd-9c78-0872ed6e2822', 'Calidad 2', 'Categoría auto-generada #2.');
+INSERT INTO public.formularios_categoria (id, nombre, descripcion) VALUES ('3c20e5a6-4c75-4c53-a497-1c068b09adcb', 'Logística 3', 'Categoría auto-generada #3.');
+INSERT INTO public.formularios_categoria (id, nombre, descripcion) VALUES ('48a215d3-1dd4-48cd-b502-4dfd13b865ba', 'Alimentos2.01', 'Alimentos');
+INSERT INTO public.formularios_categoria (id, nombre, descripcion) VALUES ('9ae92518-1961-4dc2-8751-43012680c1c3', 'Pruebas Backend', 'Para usar Locust');

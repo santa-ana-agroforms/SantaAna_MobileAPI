@@ -1,0 +1,85 @@
+name: e2e-tests
+
+on:
+    push:
+        branches: [main]
+    pull_request:
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}-e2e
+    cancel-in-progress: true
+
+jobs:
+    e2e:
+        name: Run E2E (Testcontainers or docker-compose)
+        runs-on: ubuntu-latest
+        timeout-minutes: 30
+        permissions:
+            contents: read
+
+        # Importante: NO correr dentro de "container:" para que Testcontainers pueda usar Docker del host.
+
+        env:
+            NODE_ENV: test
+            CI: true
+            # Variables dummy que a veces exige Nest en bootstrap (ajusta según tu app)
+            JWT_SECRET: testsecret
+
+            # Testcontainers (Node) funciona out-of-the-box en GitHub-hosted runners.
+            # Mantener Ryuk habilitado (default). Si en algún momento lo desactivas, setea a 'true'.
+            TESTCONTAINERS_RYUK_DISABLED: "false"
+
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "22.x"
+                  cache: "npm"
+
+            - name: Install deps (npm ci)
+              run: npm ci
+
+            - name: Ensure Docker available (for Testcontainers)
+              run: docker version
+
+            - name: Detect docker-compose.e2e.yml
+              id: detect
+              shell: bash
+              run: |
+                  if [ -f docker-compose.e2e.yml ]; then
+                    echo "E2E_COMPOSE=true" >> $GITHUB_ENV
+                  else
+                    echo "E2E_COMPOSE=false" >> $GITHUB_ENV
+                  fi
+
+            - name: Start E2E stack (docker-compose)
+              if: env.E2E_COMPOSE == 'true'
+              run: docker compose -f docker-compose.e2e.yml up -d --build
+
+            # Si usas Testcontainers, no necesitas levantar nada: las imágenes se crean solas.
+
+            - name: Run E2E tests (Jest)
+              # --runInBand ayuda a evitar race con puertos/containers en runners chicos
+              run: npm run test:e2e -- --runInBand
+
+            - name: Dump Docker ps (debug)
+              if: always()
+              run: docker ps -a
+
+            - name: Stop E2E stack (docker-compose)
+              if: always() && env.E2E_COMPOSE == 'true'
+              run: docker compose -f docker-compose.e2e.yml down -v
+
+            - name: Upload E2E artifacts (logs/coverage si existe)
+              uses: actions/upload-artifact@v4
+              if: always()
+              with:
+                  name: e2e-artifacts
+                  path: |
+                      coverage/
+                      **/test-output/**
+                      **/*.log
+                  if-no-files-found: ignore

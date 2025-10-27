@@ -38,7 +38,7 @@ const jsonTextTransformer = {
 
 @Entity({ name: 'formularios_campo' })
 export class Campo {
-  @PrimaryColumn({ type: 'varchar', length: 32, name: 'id_campo' })
+  @PrimaryColumn({ type: 'uuid', name: 'id_campo' })
   idCampo!: string;
 
   @Column({ type: 'varchar', length: 20 })
