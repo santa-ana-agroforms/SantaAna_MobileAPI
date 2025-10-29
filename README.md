@@ -1,98 +1,266 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Santa Ana – Backend móvil para captura de datos en campo (Ingenio Azucarero)
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+> Backend **NestJS + PostgreSQL** para gestionar **formularios dinámicos** y consolidar capturas **offline-first** desde la app móvil (React Native + SQLite). Incluye **contratos OpenAPI/Swagger**, **envíos idempotentes** y un plan de **pruebas (unitarias, integración, e2e)** más **pruebas de desempeño** con Locust.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+[![Node.js](https://img.shields.io/badge/Node.js-20.x-339933)]()
+[![NestJS](https://img.shields.io/badge/NestJS-10.x-E0234E)]()
+[![TypeScript](https://img.shields.io/badge/TS-5.x-3178C6)]()
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15+-336791)]()
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)]()
 
-## Description
+---
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+## TL;DR
 
-## Project setup
+- **Problema**: Capturar datos en campo con conectividad intermitente y mantener **integridad, consistencia y disponibilidad**.
+- **Solución**: Backend con **contratos claros**, **idempotencia**, catálogo versionado y consolidación en **JSONB**; el cliente móvil guarda en **SQLite** y sincroniza cuando hay señal.
+- **Stack**: NestJS (TS), PostgreSQL, Swagger/OpenAPI, Jest + Testcontainers (e2e), Locust para estrés.
+- **Evidencia/Contexto**: Diseño y objetivos se alinean con el trabajo de graduación del Ingenio Azucarero. (Ver “Diseño e Implementación del Backend…”).  
 
-```bash
-$ yarn install
+---
+
+## Tabla de contenidos
+
+1. [Arquitectura](#arquitectura)
+2. [Características clave](#características-clave)
+3. [Módulos y contratos](#módulos-y-contratos)
+4. [Modelo de datos (resumen)](#modelo-de-datos-resumen)
+5. [Requisitos previos](#requisitos-previos)
+6. [Configuración](#configuración)
+7. [Ejecución local](#ejecución-local)
+8. [Pruebas](#pruebas)
+9. [Pruebas de desempeño (Locust)](#pruebas-de-desempeño-locust)
+10. [CI/CD](#cicd)
+11. [Buenas prácticas y seguridad](#buenas-prácticas-y-seguridad)
+12. [Contribución y estilo de código](#contribución-y-estilo-de-código)
+13. [Licencia](#licencia)
+
+---
+
+## Arquitectura
+
+```
+React Native (SQLite)  <--offline-->  Cola de envíos  --(HTTP/JWT)-->  NestJS (API REST)
+       |                                                        |
+       |                              Swagger / Validación DTOs |  PostgreSQL (JSONB + relacional)
+       |                                                        |
+       └-- Sesiones de formulario, cursor, datasets locales  <--┴-- Consolidación idempotente
 ```
 
-## Compile and run the project
+- **Cliente móvil**: persiste en **SQLite**, mantiene estado de sesión y envía lotes **idempotentes**.
+- **Backend**: **NestJS** con DTOs tipados, **Swagger** y **PostgreSQL** con combinación **relacional + JSONB** para flexibilidad sin perder ACID.  
+- **Idempotencia**: el payload de creación de entrada incluye identificadores/versiones para **evitar duplicados** y asegurar **convergencia**.
+
+> Esta arquitectura y alcance están alineados con el documento de tesis (objetivos, alcance, metodología y resultados).  
+
+---
+
+## Características clave
+
+- **Offline-first** extremo a extremo (SQLite en cliente, consolidación en servidor).
+- **Catálogo versionado** de formularios y grupos (estructura relacional) + **capturas en JSONB** (estructura aplicada).
+- **Envíos idempotentes**: una y solo una entrada por intento válido.
+- **Roles y datasets filtrados por usuario**.
+- **Contratos OpenAPI/Swagger** publicados para auditoría y consumo.
+- **Pruebas**: unitarias/integración/e2e (Jest + Testcontainers) y **estrés** (Locust).
+- **CI/CD**: verificación, build y despliegue por etapas (staging → producción).
+
+---
+
+## Módulos y contratos
+
+### Autenticación
+- `POST /auth/login` → JWT (Bearer).
+- Guards y decoradores para derivar el usuario autenticado en controladores.
+
+### Formularios y versiones
+- `GET /forms/tree` → árbol de formularios por **rol** (estructura + páginas + grupos).
+- `GET /forms/datasets` → datasets visibles por rol/permiso.
+- **Contrato** con DTOs: `form_id`, `index_version_id`, metadatos de páginas/grupos y tipos simples.
+
+### Entradas (capturas)
+- `POST /entries` → crear entrada **idempotente**.  
+  **Payload base**:
+  ```json
+  {
+    "form_id": "uuid-form",
+    "index_version_id": "uuid-version",
+    "status": "completed|draft",
+    "filled_at_local": "2025-10-26T14:23:11-06:00",
+    "fill_json": { /* valores en tipos simples + firma Base64 */ },
+    "form_json": { /* fotografía de la estructura aplicada */ }
+  }
+  ```
+- Reglas:
+  - Valida vínculo `form_id:index_version_id` y requeridos mínimos (incluidos grupos).
+  - En caso de reintento con el mismo identificador lógico, **no duplica**.
+
+### Documentación
+- **Swagger UI**: `GET /api`  
+- **OpenAPI JSON**: `GET /api-json`
+
+---
+
+## Modelo de datos (resumen)
+
+- **Catálogo** (relacional):  
+  - `formularios_*` (formularios, páginas, grupos, clases de campo, categorías, etc.)  
+  - versión/índices para rastrear la estructura en uso.
+- **Operativo**:  
+  - `formularios_entry` (capturas consolidadas): índices por fecha/usuario/formulario, columnas de control y **JSONB** (`fill_json`, `form_json`).
+
+> El almacenamiento operativo en JSONB mantiene flexibilidad; el catálogo relacional garantiza trazabilidad y control.  
+
+---
+
+## Requisitos previos
+
+- Node.js **20.x**
+- Yarn **1.x** o **Berry**
+- Docker + Docker Compose (para DB local y e2e)
+- PostgreSQL **15+** (local o contenedor)
+- (Opcional) Python 3.10+ y Locust para pruebas de desempeño
+
+---
+
+## Configuración
+
+Crear `.env` (o usar variables de entorno):
 
 ```bash
-# development
-$ yarn run start
+# App
+PORT=3000
+NODE_ENV=development
 
-# watch mode
-$ yarn run start:dev
+# JWT / Seguridad
+JWT_SECRET=super_secret_jwt
+JWT_EXPIRES_IN=1d
 
-# production mode
-$ yarn run start:prod
+# Base de datos
+DB_HOST=localhost
+DB_PORT=5432
+DB_USER=santa_ana
+DB_PASS=santa_ana
+DB_NAME=santa_ana
+
+# CORS
+CORS_ORIGIN=http://localhost:5173
+
+# Logs
+LOG_LEVEL=debug
 ```
 
-## Run tests
+---
+
+## Ejecución local
 
 ```bash
-# unit tests
-$ yarn run test
+# 1) Instalar
+yarn install
 
-# e2e tests
-$ yarn run test:e2e
+# 2) Levantar DB si usás Docker
+docker compose up -d db
 
-# test coverage
-$ yarn run test:cov
+# 3) Migraciones (si aplica)
+yarn migration:run
+
+# 4) Desarrollo
+yarn start:dev
+
+# 5) Producción (local)
+yarn build && yarn start:prod
 ```
 
-## Deployment
-
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+**Scripts útiles**
 
 ```bash
-$ yarn install -g @nestjs/mau
-$ mau deploy
+yarn start           # dev simple
+yarn start:dev       # watch (Hot Reload)
+yarn start:prod      # prod
+yarn build           # compila TS
+yarn lint            # ESLint
+yarn test            # unit/integration
+yarn test:e2e        # end-to-end (Testcontainers)
+yarn test:cov        # cobertura
+yarn migration:run   # (TypeORM/DB)
+yarn migration:gen   # (TypeORM/DB)
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+---
 
-## Resources
+## Pruebas
 
-Check out a few resources that may come in handy when working with NestJS:
+### Unitarias e Integración (Jest)
+- Cobertura de **servicios, repositorios y controladores**.
+- DTOs validados con `class-validator`/`class-transformer`.
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+### End-to-End (Jest + Testcontainers)
+- Arranca **PostgreSQL** efímero con Testcontainers.
+- Semillas mínimas (roles, formulario base).
+- Verifica **/auth**, **/forms/tree**, **/forms/datasets** y **/entries** (idempotencia).
 
-## Support
+```bash
+yarn test:e2e
+```
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+> Si estás en Windows, asegurate de tener Docker Desktop activo y WSL2 habilitado.
 
-## Stay in touch
+---
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+## Pruebas de desempeño (Locust)
 
-## License
+1. Crear `locustfile.py` con los escenarios de carga sobre endpoints críticos (`/auth/login`, `/forms/tree`, `/forms/datasets`, `/entries`).
+2. Variables recomendadas:
+   - **base_url** del API
+   - **usuarios concurrentes** y **spawn rate**
+   - **peso por endpoint** (distribución realista)
+3. Ejecutar:
+```bash
+locust -H http://localhost:3000
+```
+4. Métricas a reportar:
+   - RPS, latencias p50/p95/p99, tasa de errores, throughput por endpoint.
+   - Observaciones de backpressure y uso de CPU/Memoria del contenedor DB/API.
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+> Estos resultados se integran con el capítulo de **Resultados** del trabajo, contrastando **métricas globales** y **por endpoint**.
+
+---
+
+## CI/CD
+
+- **CI**: Lint + Test + Build; **e2e** con Testcontainers en pipeline.
+- **CD**: Despliegue a **staging** y promoción manual a **producción**.
+- Artefactos: imagen Docker con `multi-stage build`.
+- Recomendado: **migraciones** automáticas en staging y gates para prod.
+
+---
+
+## Buenas prácticas y seguridad
+
+- **JWT** (Bearer) con expiración corta y refresh (si aplica).
+- **Helmet**, **CORS** por origen, **rate limiting** a endpoints públicos.
+- Validación estricta de **DTOs**; sanitización de entrada.
+- **Idempotencia** por contrato (identificadores lógicos y checks únicos).
+- **Índices** en `formularios_entry` para lecturas comunes y deduplicación.
+- **Logs** estructurados y trazas por request (correlation id).
+
+---
+
+## Contribución y estilo de código
+
+- Estilo **TypeScript estricto**.
+- Commits: **Conventional Commits**.
+- PRs con checklist: pruebas pasan, cobertura no baja, Swagger actualizado.
+
+---
+
+## Licencia
+
+MIT. Ver archivo `LICENSE`.
+
+---
+
+## Referencias y contexto
+
+- **Trabajo de graduación** (objetivos, alcance, metodología y resultados que fundamentan este repo).  
+- **Plantilla y README original** del proyecto NestJS como base técnica.
