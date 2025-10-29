@@ -1,5 +1,4 @@
 /* eslint-disable @typescript-eslint/no-unsafe-argument */
-/* eslint-disable @typescript-eslint/no-unsafe-call */
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
@@ -253,6 +252,8 @@ export async function loadAllDbFixtures(ds: DataSource, files?: string[]) {
     'formularios_user_formulario.sql',
     'formularios_pagina_campo.sql',
     'formularios_entry.sql',
+    'seed_operador1.sql',
+    'other.sql',
   ];
 
   const order = files && files.length > 0 ? files : defaultOrder;
