@@ -1,7 +1,3 @@
-/* eslint-disable @typescript-eslint/no-redundant-type-constituents */
-/* eslint-disable @typescript-eslint/no-unsafe-call */
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
-/* eslint-disable @typescript-eslint/no-unsafe-member-access */
 // src/forms/forms.service.ts
 import {
   Injectable,
@@ -252,6 +248,11 @@ export class FormsService {
    ON fpc.id_pagina_version = fpv.id_pagina_version
  JOIN formularios_campo fc
    ON fc.id_campo = fpc.id_campo
+  AND NOT EXISTS (
+    SELECT 1
+    FROM formularios_campo_grupo acg
+    WHERE acg.id_campo = fpc.id_campo
+  )
 `;
 
   // WHERE de visibilidad + disponibilidad

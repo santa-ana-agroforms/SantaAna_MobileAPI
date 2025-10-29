@@ -10,6 +10,9 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   async login(@Body() dto: LoginDto) {
     // Ahora AuthService.login soporta (username, password)
+    console.log(
+      `AuthController.login: usuario=${dto.nombre_usuario} password=${dto.password}`,
+    );
     return this.auth.login(dto.nombre_usuario, dto.password);
   }
 }

@@ -2,7 +2,9 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
-import type { AuthUser } from 'src/auth/types/auth.types';
+import type { AuthUser } from '../auth/types/auth.types';
+import { transform } from '@swc/core';
+import type { Options, Output, JscConfig, ModuleConfig } from '@swc/core';
 
 export type GroupFlatRow = {
   id_grupo: string;
@@ -24,6 +26,32 @@ export type GroupFlatRow = {
   campo_ayuda: string | null;
   campo_config: unknown;
   campo_requerido: boolean;
+};
+
+export type GroupCampoNode = {
+  id_campo: string;
+  sequence: number | null;
+  tipo: string;
+  clase: string;
+  nombre_interno: string;
+  etiqueta: string;
+  ayuda: string | null;
+  config: unknown;
+  requerido: boolean;
+  pagina: { id_pagina: string; nombre: string; secuencia: number };
+};
+
+export type GroupNode = {
+  id_grupo: string;
+  nombre: string;
+  campos: GroupCampoNode[];
+};
+
+type TranspileEvalResult = {
+  code: string;
+  engine: 'swc';
+  success: boolean;
+  error?: string;
 };
 
 const parseJsonSafe = <T = unknown>(val: unknown): unknown => {
@@ -175,12 +203,10 @@ JOIN formularios_campo fc
   ON fc.id_campo = fcg.id_campo
 ORDER BY g.nombre, gf.pagina_secuencia, gf.grupo_sequence NULLS LAST, fc.id_campo;
 `;
-    console.log('GroupsService.getGroupsFlatAll SQL:', sql);
     // console.log('GroupsService.getGroupsFlatAll SQL:', sql);
     const rows: GroupFlatRow[] = await this.dataSource.query(sql, [
       user.nombre_usuario,
     ]);
-    console.log('GroupsService.getGroupsFlatAll rows:', rows);
     // console.log('GroupsService.getGroupsFlatAll rows:', rows);
     return rows;
   }
@@ -223,7 +249,7 @@ group_fields AS (
 )
 SELECT
   g.id_grupo                         AS id_grupo,
-  g.nombre                           AS grupo_nombre,
+  g.nombre                           AS grupo_nombre،
 
   gf.formulario_id                   AS formulario_id,
   gf.pagina_id                       AS pagina_id,
@@ -263,38 +289,23 @@ ORDER BY g.nombre, gf.pagina_secuencia, gf.grupo_sequence NULLS LAST, fc.id_camp
     const flat = await this.getGroupsFlatAll(user);
     // console.log('GroupsService.getGroupsTreeAll flat:', flat);
     if (flat.length === 0) return [];
-    return this.groupFlatToTree(flat);
+    const trees = this.groupFlatToTree(flat);
+    await this.postProcessCalcInGroupTrees(trees);
+    return trees;
   }
 
   // ---- Árbol: un grupo por id
   async getGroupTreeById(id_grupo: string, user: AuthUser) {
     const flat = await this.getGroupFlatById(id_grupo, user);
     if (flat.length === 0) return null;
-    return this.groupFlatToTree(flat)[0];
+    const tree = this.groupFlatToTree(flat)[0];
+    await this.postProcessCalcInGroupTree(tree);
+    return tree;
   }
 
   // ---- Helper de armado (por grupo)
-  private groupFlatToTree(rows: GroupFlatRow[]) {
-    type CampoNode = {
-      id_campo: string;
-      sequence: number | null;
-      tipo: string;
-      clase: string;
-      nombre_interno: string;
-      etiqueta: string;
-      ayuda: string | null;
-      config: unknown;
-      requerido: boolean;
-      pagina: { id_pagina: string; nombre: string; secuencia: number };
-    };
-
-    type GrupoNode = {
-      id_grupo: string;
-      nombre: string;
-      campos: CampoNode[];
-    };
-
-    const gmap = new Map<string, GrupoNode>();
+  private groupFlatToTree(rows: GroupFlatRow[]): GroupNode[] {
+    const gmap = new Map<string, GroupNode>();
 
     for (const r of rows) {
       if (!gmap.has(r.id_grupo)) {
@@ -340,5 +351,158 @@ ORDER BY g.nombre, gf.pagina_secuencia, gf.grupo_sequence NULLS LAST, fc.id_camp
     return Array.from(gmap.values()).sort((a, b) =>
       a.nombre.localeCompare(b.nombre),
     );
+  }
+
+  // ============================================================
+  // =================== CALC POST-PROCESADO ====================
+  // ============================================================
+
+  private isCalcField = (
+    field: Pick<GroupCampoNode, 'clase' | 'tipo'>,
+  ): boolean => {
+    const clase = String(field?.clase ?? '').toLowerCase();
+    const tipo = String(field?.tipo ?? '').toLowerCase();
+    return clase === 'calc' || tipo === 'calc';
+  };
+
+  private getOperationFromConfig = (cfg: unknown): string | null => {
+    if (typeof cfg === 'string') return cfg;
+    if (typeof cfg === 'object' && cfg !== null) {
+      const obj = cfg as Record<string, unknown>;
+      const direct = obj['operation'];
+      if (typeof direct === 'string') return direct;
+      const calc = obj['calc'];
+      if (typeof calc === 'object' && calc !== null) {
+        const op = (calc as Record<string, unknown>)['operation'];
+        if (typeof op === 'string') return op;
+      }
+    }
+    return null;
+  };
+
+  private setOperationInConfig = (
+    cfgRef: unknown,
+    compiled: string,
+  ): Record<string, unknown> => {
+    const out: Record<string, unknown> =
+      typeof cfgRef === 'object' && cfgRef !== null
+        ? { ...(cfgRef as Record<string, unknown>) }
+        : {};
+    if (Object.prototype.hasOwnProperty.call(out, 'operation')) {
+      out['operation'] = compiled;
+      return out;
+    }
+    const calc =
+      typeof out['calc'] === 'object' && out['calc'] !== null
+        ? { ...(out['calc'] as Record<string, unknown>) }
+        : {};
+    calc['operation'] = compiled;
+    out['calc'] = calc;
+    return out;
+  };
+
+  private transpileModuleForHermesEval = async (
+    tsCode: string,
+    swcOptions?: Partial<Options>,
+  ): Promise<TranspileEvalResult> => {
+    try {
+      const jsc: JscConfig = {
+        parser: { syntax: 'typescript', tsx: false, decorators: true },
+        target: 'es2019',
+        externalHelpers: true,
+        ...(swcOptions?.jsc ?? {}),
+      };
+
+      const userModule: ModuleConfig | undefined = swcOptions?.module;
+
+      const moduleRest: Omit<ModuleConfig, 'type'> = userModule
+        ? (() => {
+            const m = { ...userModule } as Record<string, unknown>;
+            delete m.type;
+            return m as Omit<ModuleConfig, 'type'>;
+          })()
+        : ({} as Omit<ModuleConfig, 'type'>);
+
+      const moduleCfg: ModuleConfig = {
+        strictMode: false,
+        noInterop: true,
+        ...moduleRest,
+        type: 'commonjs',
+      };
+
+      const transformOptions: Options = {
+        ...swcOptions,
+        jsc,
+        module: moduleCfg,
+        isModule: swcOptions?.isModule ?? true,
+        sourceMaps: swcOptions?.sourceMaps ?? false,
+        minify: swcOptions?.minify ?? false,
+      };
+
+      const { code: cjs }: Output = await transform(tsCode, transformOptions);
+
+      const wrapped = `(function(){var module={exports:{}},exports=module.exports;
+${cjs}
+return (module.exports && Object.keys(module.exports).length ? module.exports : exports);
+})()`;
+
+      return { code: wrapped, success: true, engine: 'swc' };
+    } catch (e: unknown) {
+      const message =
+        e instanceof Error
+          ? e.message
+          : typeof e === 'string'
+            ? e
+            : JSON.stringify(e);
+      return {
+        code: '',
+        success: false,
+        engine: 'swc',
+        error: message,
+      };
+    }
+  };
+
+  private compileCalcOperationOrEmpty = async (
+    tsCode: string,
+  ): Promise<string> => {
+    try {
+      const res = await this.transpileModuleForHermesEval(tsCode, {
+        module: { type: 'commonjs', strictMode: false, noInterop: true },
+        jsc: {
+          parser: { syntax: 'typescript', tsx: false, decorators: true },
+          target: 'es2019',
+          externalHelpers: false,
+        },
+        isModule: true,
+        sourceMaps: false,
+        minify: false,
+      });
+      return res.success ? res.code : '';
+    } catch {
+      return '';
+    }
+  };
+
+  private async postProcessCalcInGroupTree(group: GroupNode): Promise<void> {
+    if (!group?.campos) return;
+    await Promise.all(
+      group.campos.map(async (campo) => {
+        if (!this.isCalcField(campo)) return;
+        const opTs = this.getOperationFromConfig(campo.config);
+        if (!opTs) {
+          campo.config = this.setOperationInConfig(campo.config, '');
+          return;
+        }
+        const compiled = await this.compileCalcOperationOrEmpty(opTs);
+        campo.config = this.setOperationInConfig(campo.config, compiled);
+      }),
+    );
+  }
+
+  private async postProcessCalcInGroupTrees(
+    groups: GroupNode[],
+  ): Promise<void> {
+    await Promise.all(groups.map((g) => this.postProcessCalcInGroupTree(g)));
   }
 }
