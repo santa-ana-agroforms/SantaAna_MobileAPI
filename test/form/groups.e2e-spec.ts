@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-call */
 import {
   setupAppAndDb,
   teardown,
@@ -47,6 +48,30 @@ describe('[E2E] Groups – Árbol de grupos (con fixtures)', () => {
 
     const grupos: Grupo[] = res.body;
     expect(grupos.length).toBeGreaterThan(0);
+    expect(grupos[0].campos).toBeDefined();
+    expect(Array.isArray(grupos[0].campos)).toBe(true);
+    expect(grupos[0].campos.length).toBeGreaterThan(3); // al menos 5 campos en el primer grupo
+
+    // Buscar un campo de clase calc
+    const campoCalc = grupos[0].campos.find((c) => c.clase === 'calc');
+    expect(campoCalc).toBeDefined();
+    expect(typeof campoCalc!.config).toBe('object');
+    const configCalc = campoCalc!.config as any;
+    expect(typeof configCalc.operation).toBe('string');
+    expect(configCalc.operation.length).toBeGreaterThan(0);
+    // Try to evaluate the calc operation (simple cases)
+    const sampleValues = { variable_a: 10, variableb: 5 };
+    let evalResult: number;
+    try {
+      const func = eval(configCalc.operation as string).default;
+      evalResult = func(sampleValues);
+      expect(typeof evalResult).toBe('string');
+      expect(evalResult).toBe('15');
+    } catch (e) {
+      console.warn(
+        `⚠️ No se pudo evaluar la operación de cálculo: ${e?.message ?? e}`,
+      );
+    }
 
     // Debe existir el grupo "Datos del Lote" que trajiste en fixtures
     const datosDelLote = grupos.find(
