@@ -113,7 +113,7 @@ services:
       - http://api:3000
       - --headless
       - -u
-      - "50"
+      - "96"
       - -r
       - "5"
       - -t
