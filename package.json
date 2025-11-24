@@ -35,7 +35,7 @@
     "@nestjs/swagger": "^11.2.0",
     "@nestjs/typeorm": "^11.0.0",
     "@nestjs/websockets": "^11.1.6",
-    "@swc/core": "^1.13.5",
+    "@swc/core": "^1.14.0",
     "@swc/helpers": "^0.5.17",
     "argon2": "^0.44.0",
     "class-transformer": "^0.5.1",
