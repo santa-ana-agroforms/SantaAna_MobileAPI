@@ -105,6 +105,8 @@ export class AuthQrController {
   }
 
   @Get('terminals')
+  @ApiKeyAuth()
+  @UseGuards(ApiKeyGuard)
   async getUserTerminals() {
     const terms = await this.svc.getAllTerminals();
     const r_ob = terms.map((r) => ({
