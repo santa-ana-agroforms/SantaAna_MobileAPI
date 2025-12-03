@@ -275,7 +275,7 @@ export class AuthQrService {
   addTerminal = async (data: Record<string, any>, nombreUsuario: string) => {
     const terminal = this.userTerminalRepo.create({
       usuario: { nombreUsuario },
-      terminalInfo: data,
+      terminal_info: data,
     });
     await this.userTerminalRepo.save(terminal);
   };
