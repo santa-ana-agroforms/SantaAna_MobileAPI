@@ -4,6 +4,7 @@ import {
   PrimaryGeneratedColumn,
   ManyToOne,
   JoinColumn,
+  RelationId,
 } from 'typeorm';
 import { Usuario } from './formularios-usuario.entity';
 
@@ -31,9 +32,14 @@ export class UserTerminal {
   @PrimaryGeneratedColumn({ type: 'bigint', name: 'id' })
   id!: string;
 
-  @ManyToOne(() => Usuario, (u) => u.userTerminals, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'nombre_usuario', referencedColumnName: 'nombreUsuario' })
+  // relación hacia Usuario (no hace falta agregar nada en Usuario)
+  @ManyToOne(() => Usuario, { nullable: false })
+  @JoinColumn({ name: 'nombre_usuario' })
   usuario!: Usuario;
+
+  // propiedad que contiene el FK (opcional, no necesita @Column)
+  @RelationId((ut: UserTerminal) => ut.usuario)
+  usuarioId!: string;
 
   @Column({ type: 'text', nullable: true, transformer: jsonTextTransformer })
   terminal_info!: Record<string, unknown> | null;

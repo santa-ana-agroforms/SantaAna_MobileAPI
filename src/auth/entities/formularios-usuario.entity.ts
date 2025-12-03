@@ -2,7 +2,6 @@ import { Column, Entity, OneToMany, PrimaryColumn } from 'typeorm';
 import { UserFormulario } from './formularios-user-formulario.entity';
 import { UsuarioGroup } from './formularios-usuario-groups.entity';
 import { UsuarioUserPermission } from './formularios-usuario-user-permissions.entity';
-import { UserTerminal } from '.';
 
 @Entity({ name: 'formularios_usuario' })
 export class Usuario {
@@ -44,7 +43,4 @@ export class Usuario {
   // Rel: permisos del usuario (FK a auth_permission en tabla intermedia)
   @OneToMany(() => UsuarioUserPermission, (p) => p.usuario)
   userPermissions!: UsuarioUserPermission[];
-
-  @OneToMany(() => UserTerminal, (ut) => ut.usuario)
-  userTerminals!: UserTerminal[];
 }
