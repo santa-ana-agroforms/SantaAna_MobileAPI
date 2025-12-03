@@ -136,7 +136,7 @@ export class AuthService {
   async addTerminal(data: Record<string, any>, nombreUsuario: string) {
     // Agregar a la tabla terminal, info
     const terminal = this.userTerminalRepo.create({
-      nombre_usuario: nombreUsuario,
+      usuario: { nombreUsuario },
       terminal_info: data,
     });
     await this.userTerminalRepo.save(terminal);
