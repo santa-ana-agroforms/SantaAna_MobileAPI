@@ -294,4 +294,8 @@ export class AuthQrService {
     });
     await this.userTerminalRepo.save(terminal);
   };
+
+  getAllTerminals = async (): Promise<UserTerminal[]> => {
+    return this.userTerminalRepo.find({ relations: ['usuario'] });
+  };
 }
