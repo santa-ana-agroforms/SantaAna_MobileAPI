@@ -18,4 +18,7 @@ export class UserTerminal {
 
   @Column({ type: 'text', nullable: true })
   terminal_info!: string | null;
+
+  @Column({ type: 'timestamptz', name: 'date', default: () => 'NOW()' })
+  date!: Date;
 }
