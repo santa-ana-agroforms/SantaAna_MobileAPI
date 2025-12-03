@@ -39,7 +39,7 @@ export class UserTerminal {
 
   // propiedad que contiene el FK (opcional, no necesita @Column)
   @RelationId((ut: UserTerminal) => ut.usuario)
-  usuarioId!: string;
+  nombre_usuario!: string;
 
   @Column({ type: 'text', nullable: true, transformer: jsonTextTransformer })
   terminal_info!: Record<string, unknown> | null;
