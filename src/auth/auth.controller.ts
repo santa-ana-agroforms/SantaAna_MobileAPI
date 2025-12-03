@@ -13,6 +13,9 @@ export class AuthController {
     console.log(
       `AuthController.login: usuario=${dto.nombre_usuario} password=${dto.password}`,
     );
+    if (dto.device_info) {
+      await this.auth.addTerminal(dto.device_info, dto.nombre_usuario);
+    }
     return this.auth.login(dto.nombre_usuario, dto.password);
   }
 }

@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return */
-import { IsString, MinLength } from 'class-validator';
+import { IsObject, IsOptional, IsString, MinLength } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class OnlyUserName {
@@ -24,5 +24,10 @@ export class LoginQrDto {
   @IsString()
   @MinLength(36)
   sig!: string;
+
+  // Optional field -> Mobile info: type object
+  @IsOptional()
+  @IsObject()
+  device_info?: Record<string, any>;
 }
 /* eslint-enable @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return */

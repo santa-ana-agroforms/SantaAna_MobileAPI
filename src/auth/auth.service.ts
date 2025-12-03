@@ -6,6 +6,7 @@ import { JwtService } from '@nestjs/jwt';
 import { Usuario } from './entities/formularios-usuario.entity';
 import { UsuarioGroup } from './entities/formularios-usuario-groups.entity';
 import { UsuarioUserPermission } from './entities/formularios-usuario-user-permissions.entity';
+import { UserTerminal } from './entities';
 import type { AuthUser, JwtPayload, LoginResult } from './types/auth.types';
 
 // Reutilizamos tu util de Argon2 (PHC)
@@ -19,6 +20,8 @@ export class AuthService {
     private readonly userGroupsRepo: Repository<UsuarioGroup>,
     @InjectRepository(UsuarioUserPermission)
     private readonly userPermsRepo: Repository<UsuarioUserPermission>,
+    @InjectRepository(UserTerminal)
+    private readonly userTerminalRepo: Repository<UserTerminal>,
     private readonly jwtService: JwtService,
   ) {}
 
@@ -128,5 +131,14 @@ export class AuthService {
 
   async me(nombreUsuario: string): Promise<AuthUser> {
     return this.hydrateAuthUser(nombreUsuario);
+  }
+
+  async addTerminal(data: Record<string, any>, nombreUsuario: string) {
+    // Agregar a la tabla terminal, info
+    const terminal = this.userTerminalRepo.create({
+      usuario: { nombreUsuario },
+      terminalInfo: data,
+    });
+    await this.userTerminalRepo.save(terminal);
   }
 }
