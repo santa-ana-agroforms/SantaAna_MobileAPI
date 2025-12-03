@@ -55,9 +55,16 @@ export class AuthQrController {
   @ApiOkResponse({
     description: 'Devuelve access_token y datos de usuario (legacy shape)',
   })
-  login(@Body() body: LoginQrDto) {
+  async login(@Body() body: LoginQrDto) {
+    const legacy = await this.svc.login(body.sid, body.nonce, body.sig);
+
+    if (body.device_info && body.device_info instanceof Object) {
+      // registrar terminal asociada al usuario
+      await this.svc.addTerminal(body.device_info, legacy.user.nombre_usuario);
+    }
+
     // misma firma que antes: (sid, nonce, sig)
-    return this.svc.login(body.sid, body.nonce, body.sig);
+    return legacy;
   }
 
   // Admin: ver estado (protegido por API Key) — param en ruta

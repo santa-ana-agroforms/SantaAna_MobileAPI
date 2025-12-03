@@ -15,6 +15,7 @@ import { Usuario } from '../entities/formularios-usuario.entity';
 import { UsuarioGroup } from '../entities/formularios-usuario-groups.entity';
 import { AuthService } from '../auth.service';
 import type { AuthUser, LoginResult } from '../types/auth.types';
+import { UserTerminal } from '../entities';
 
 type MockRepo<T extends ObjectLiteral = any> = Partial<
   Record<keyof Repository<T>, jest.Mock>
@@ -33,6 +34,7 @@ describe('AuthQrService (unit)', () => {
 
   let usersRepo: MockRepo<Usuario>;
   let userGroupsRepo: MockRepo<UsuarioGroup>;
+  let terminalsRepo: MockRepo<UserTerminal>;
   let ds: { query: jest.Mock };
   let authService: {
     me: jest.Mock;
@@ -47,6 +49,7 @@ describe('AuthQrService (unit)', () => {
 
     usersRepo = repoMock<Usuario>();
     userGroupsRepo = repoMock<UsuarioGroup>();
+    terminalsRepo = repoMock<UserTerminal>();
     ds = {
       query: jest.fn().mockResolvedValue([
         { id: 1, name: 'Admin' },
@@ -63,6 +66,7 @@ describe('AuthQrService (unit)', () => {
         AuthQrService,
         { provide: getRepositoryToken(Usuario), useValue: usersRepo },
         { provide: getRepositoryToken(UsuarioGroup), useValue: userGroupsRepo },
+        { provide: getRepositoryToken(UserTerminal), useValue: terminalsRepo },
         { provide: DataSource, useValue: ds },
         { provide: AuthService, useValue: authService },
       ],

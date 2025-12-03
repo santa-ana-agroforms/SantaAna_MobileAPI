@@ -18,6 +18,7 @@ import { Usuario } from '../entities/formularios-usuario.entity';
 import { UsuarioGroup } from '../entities/formularios-usuario-groups.entity';
 import { AuthService } from '../auth.service';
 import type { LoginResult } from '../types/auth.types';
+import { UserTerminal } from '../entities';
 
 type QrStatus = 'pending' | 'claimed' | 'expired';
 
@@ -53,6 +54,8 @@ export class AuthQrService {
     private readonly usersRepo: Repository<Usuario>,
     @InjectRepository(UsuarioGroup)
     private readonly userGroupsRepo: Repository<UsuarioGroup>,
+    @InjectRepository(UserTerminal)
+    private readonly userTerminalRepo: Repository<UserTerminal>,
     private readonly authService: AuthService,
     private readonly dataSource: DataSource,
   ) {}
@@ -267,5 +270,13 @@ export class AuthQrService {
       memStore.set(sid, sess);
     }
     return { status: sess.status };
+  };
+
+  addTerminal = async (data: Record<string, any>, nombreUsuario: string) => {
+    const terminal = this.userTerminalRepo.create({
+      usuario: { nombreUsuario },
+      terminalInfo: data,
+    });
+    await this.userTerminalRepo.save(terminal);
   };
 }

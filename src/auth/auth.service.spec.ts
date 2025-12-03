@@ -15,6 +15,7 @@ jest.mock('./crypto/argon2.util', () => ({
   verifyPassword: jest.fn(),
 }));
 import * as argon2Util from './crypto/argon2.util';
+import { UserTerminal } from './entities';
 
 type RepoMock<T = any> = {
   findOne: jest.Mock<Promise<T | null>, any>;
@@ -32,6 +33,7 @@ describe('AuthService (unit)', () => {
   let usersRepo: RepoMock<Usuario>;
   let groupsRepo: RepoMock<UsuarioGroup>;
   let permsRepo: RepoMock<UsuarioUserPermission>;
+  let terminalsRepo: RepoMock<UserTerminal>;
   let jwt: { signAsync: jest.Mock<Promise<string>, any> };
 
   const USERNAME = 'dahernandez';
@@ -67,6 +69,7 @@ describe('AuthService (unit)', () => {
     usersRepo = repoMock<Usuario>();
     groupsRepo = repoMock<UsuarioGroup>();
     permsRepo = repoMock<UsuarioUserPermission>();
+    terminalsRepo = repoMock<UserTerminal>();
     jwt = { signAsync: jest.fn().mockResolvedValue('signed.jwt.token') };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -78,6 +81,7 @@ describe('AuthService (unit)', () => {
           provide: getRepositoryToken(UsuarioUserPermission),
           useValue: permsRepo,
         },
+        { provide: getRepositoryToken(UserTerminal), useValue: terminalsRepo },
         { provide: JwtService, useValue: jwt },
       ],
     }).compile();
@@ -97,6 +101,7 @@ describe('AuthService (unit)', () => {
     usersRepo.findOne.mockResolvedValue(baseEntity);
     groupsRepo.find.mockResolvedValue(groupsRows);
     permsRepo.find.mockResolvedValue(permsRows);
+    terminalsRepo.find.mockResolvedValue([]);
 
     (argon2Util.verifyPassword as jest.Mock).mockResolvedValue(true);
 

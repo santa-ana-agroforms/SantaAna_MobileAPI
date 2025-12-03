@@ -1,4 +1,10 @@
-import { IsNotEmpty, IsString, Length } from 'class-validator';
+import {
+  IsNotEmpty,
+  IsString,
+  Length,
+  IsObject,
+  IsOptional,
+} from 'class-validator';
 
 export class LoginDto {
   @IsString()
@@ -10,4 +16,9 @@ export class LoginDto {
   @IsNotEmpty()
   @Length(1, 256)
   password!: string;
+
+  // Optional field -> Mobile info: type object
+  @IsOptional()
+  @IsObject()
+  device_info?: Record<string, any>;
 }
