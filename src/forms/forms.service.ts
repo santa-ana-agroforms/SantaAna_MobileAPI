@@ -1050,6 +1050,68 @@ return (module.exports && Object.keys(module.exports).length ? module.exports : 
     }
   };
 
+  getAllTerminals = async (): Promise<
+    {
+      id: string;
+      nombre_usuario: string;
+      terminal_info: string | Record<string, unknown> | null;
+    }[]
+  > => {
+    /**
+     * @Entity({ name: 'formularios_user_terminal' })
+     export class UserTerminal {
+       @PrimaryGeneratedColumn({ type: 'bigint', name: 'id' })
+       id!: string;
+     
+       @ManyToOne(() => Usuario, (u) => u.userTerminals, { onDelete: 'CASCADE' })
+       @JoinColumn({ name: 'nombre_usuario', referencedColumnName: 'nombreUsuario' })
+       usuario!: Usuario;
+     
+       @Column({ type: 'text', nullable: true, transformer: jsonTextTransformer })
+       terminal_info!: Record<string, unknown> | null;
+     }
+     */
+    const sql = `
+      SELECT
+        ut.id,
+        ut.nombre_usuario,
+        ut.terminal_info::text AS terminal_info
+      FROM formularios_user_terminal ut;
+    `;
+    const rows: Array<{
+      id: string;
+      nombre_usuario: string;
+      terminal_info: string | Record<string, unknown> | null;
+    }> = await this.dataSource.query(sql);
+
+    // Convertir terminal_info de JSON text a objeto (usar parseJsonSafe para evitar any)
+    for (const r of rows) {
+      if (r.terminal_info !== null && typeof r.terminal_info === 'string') {
+        const parsed = parseJsonSafe(r.terminal_info);
+        if (parsed === null) {
+          r.terminal_info = null;
+        } else if (typeof parsed === 'object') {
+          r.terminal_info = parsed as Record<string, unknown>;
+        } else {
+          r.terminal_info = null;
+        }
+      } else if (
+        r.terminal_info !== null &&
+        typeof r.terminal_info !== 'string'
+      ) {
+        // Si el transformador ya devolvió un valor no string, asegurar que sea objeto
+        const v = r.terminal_info as unknown;
+        if (typeof v === 'object') {
+          r.terminal_info = v as Record<string, unknown>;
+        } else {
+          r.terminal_info = null;
+        }
+      }
+    }
+
+    return rows;
+  };
+
   // ============================================================
   // =================== CALC POST-PROCESADO ====================
   // ============================================================

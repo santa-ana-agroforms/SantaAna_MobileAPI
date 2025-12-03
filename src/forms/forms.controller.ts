@@ -34,4 +34,9 @@ export class FormsController {
   async getUserDatasets(@AuthUser() user: TypeAuthUser) {
     return this.service.getUserDatasetsAsTables(user);
   }
+
+  @Get('terminals')
+  async getUserTerminals() {
+    return this.service.getAllTerminals();
+  }
 }
