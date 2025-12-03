@@ -273,6 +273,21 @@ export class AuthQrService {
   };
 
   addTerminal = async (data: Record<string, any>, nombreUsuario: string) => {
+    /**
+     * @Entity({ name: 'formularios_user_terminal' })
+     export class UserTerminal {
+       @PrimaryGeneratedColumn({ type: 'bigint', name: 'id' })
+       id!: string;
+     
+       @ManyToOne(() => Usuario, (u) => u.userTerminals, { onDelete: 'CASCADE' })
+       @JoinColumn({ name: 'nombre_usuario', referencedColumnName: 'nombreUsuario' })
+       usuario!: Usuario;
+     
+       @Column({ type: 'text', nullable: true, transformer: jsonTextTransformer })
+       terminal_info!: Record<string, unknown> | null;
+     }
+     
+     */
     const terminal = this.userTerminalRepo.create({
       usuario: { nombreUsuario },
       terminal_info: data,
