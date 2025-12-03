@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/no-unsafe-argument */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import {
   BadRequestException,
   Body,
@@ -100,6 +102,22 @@ export class AuthQrController {
       .update(`${s.sid}.${s.nonce}`)
       .digest('hex');
     return { ...s, expectedSig };
+  }
+
+  @Get('terminals')
+  async getUserTerminals() {
+    const terms = await this.svc.getAllTerminals();
+    const r_ob = terms.map((r) => ({
+      nombre_usuario: r.usuario.nombreUsuario,
+      terminal_info: JSON.parse(r.terminal_info ?? 'null'),
+    }));
+
+    const k = r_ob.map((e) => ({
+      ...e,
+      terminal_info: JSON.parse(e.terminal_info ?? 'null'),
+    }));
+
+    return k;
   }
 }
 function createHmac(algorithm: string, secret: string) {
