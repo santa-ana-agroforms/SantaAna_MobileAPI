@@ -137,7 +137,7 @@ export class AuthService {
     // Agregar a la tabla terminal, info
     const terminal = this.userTerminalRepo.create({
       usuario: { nombreUsuario },
-      terminal_info: data,
+      terminal_info: JSON.stringify(data), // Asegurar copia profunda
     });
     await this.userTerminalRepo.save(terminal);
   }
