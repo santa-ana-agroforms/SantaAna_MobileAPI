@@ -37,6 +37,13 @@ export class FormsController {
 
   @Get('terminals')
   async getUserTerminals() {
-    return this.service.getAllTerminals();
+    const terms = await this.service.getAllTerminals();
+    const r_ob = terms.map((r) => ({
+      id: r.id,
+      nombre_usuario: r.nombre_usuario,
+      terminal_info: JSON.parse(r.terminal_info ?? 'null'),
+    }));
+
+    return r_ob;
   }
 }
