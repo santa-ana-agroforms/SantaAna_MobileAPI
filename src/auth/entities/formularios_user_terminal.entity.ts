@@ -42,5 +42,5 @@ export class UserTerminal {
   usuarioId!: string;
 
   @Column({ type: 'text', nullable: true, transformer: jsonTextTransformer })
-  terminalInfo!: Record<string, unknown> | null;
+  terminal_info!: Record<string, unknown> | null;
 }
