@@ -109,17 +109,15 @@ export class AuthQrController {
   @UseGuards(ApiKeyGuard)
   async getUserTerminals() {
     const terms = await this.svc.getAllTerminals();
+    console.log(terms);
     const r_ob = terms.map((r) => ({
+      id: r.id,
       nombre_usuario: r.usuario.nombreUsuario,
       terminal_info: JSON.parse(r.terminal_info ?? 'null'),
     }));
+    console.log(r_ob);
 
-    const k = r_ob.map((e) => ({
-      ...e,
-      terminal_info: JSON.parse(e.terminal_info ?? 'null'),
-    }));
-
-    return k;
+    return r_ob;
   }
 }
 function createHmac(algorithm: string, secret: string) {
